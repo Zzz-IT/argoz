@@ -111,7 +111,7 @@ func vlessHandshake(r io.Reader, n Node) (string, error) {
 	}
 	port := int(binary.BigEndian.Uint16(pb[:]))
 
-	host, err := readAddr(r)
+	host, err := readVlessAddr(r)
 	if err != nil {
 		return "", err
 	}
@@ -134,4 +134,42 @@ func normalizeUUID(s string) string {
 		return s
 	}
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// readVlessAddr 解析 VLESS 目标地址。
+// 注意：VLESS 的地址类型与 SOCKS5 不同 —— 1=IPv4，2=域名，3=IPv6。
+// （SOCKS5/Trojan 是 1=IPv4，3=域名，4=IPv6，不要混用）
+func readVlessAddr(r io.Reader) (string, error) {
+	var atyp [1]byte
+	if _, err := io.ReadFull(r, atyp[:]); err != nil {
+		return "", err
+	}
+	switch atyp[0] {
+	case 0x01: // IPv4
+		var b [4]byte
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return "", err
+		}
+		return net.IP(b[:]).String(), nil
+	case 0x02: // 域名
+		var l [1]byte
+		if _, err := io.ReadFull(r, l[:]); err != nil {
+			return "", err
+		}
+		if l[0] == 0 {
+			return "", errors.New("域名长度非法")
+		}
+		b := make([]byte, l[0])
+		if _, err := io.ReadFull(r, b); err != nil {
+			return "", err
+		}
+		return string(b), nil
+	case 0x03: // IPv6
+		var b [16]byte
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return "", err
+		}
+		return net.IP(b[:]).String(), nil
+	}
+	return "", fmt.Errorf("不支持的地址类型: %d", atyp[0])
 }

@@ -237,21 +237,19 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 		waitCh <- err
 	}()
 
-	if node.Tunnel.Mode == "fixed" {
-		go func() {
-			select {
-			case <-ctx.Done():
-			case <-time.After(2 * time.Second):
-				t.mu.Lock()
-				if t.state == "starting" {
-					t.state = "up"
-					t.lastErr = ""
-					t.nextRetry = time.Time{}
-				}
-				t.mu.Unlock()
+	// 45 秒内没有注册到 Cloudflare 边缘就杀掉重来（避免"进程活着但根本没连上"）
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(45 * time.Second):
+			t.mu.Lock()
+			ok := t.state == "up"
+			t.mu.Unlock()
+			if !ok && cmd.Process != nil {
+				_ = cmd.Process.Kill()
 			}
-		}()
-	}
+		}
+	}()
 
 	sc := bufio.NewScanner(pr)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
@@ -267,16 +265,29 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 			tail = tail[1:]
 		}
 
+		// cloudflared 打印 "Registered tunnel connection" 才代表真的连上了边缘
+		low := strings.ToLower(line)
+		if strings.Contains(low, "registered tunnel connection") || strings.Contains(low, "connection registered") {
+			t.mu.Lock()
+			t.state = "up"
+			t.lastErr = ""
+			t.nextRetry = time.Time{}
+			t.mu.Unlock()
+		}
+
 		if node.Tunnel.Mode == "temp" {
 			if m := domainRe.FindString(line); m != "" {
 				domain := strings.TrimPrefix(m, "https://")
 				if domain != node.Tunnel.Domain {
 					t.eng.SetDomain(t.id, domain)
 				}
+				// 抓到域名说明隧道已建立
 				t.mu.Lock()
-				t.state = "up"
-				t.lastErr = ""
-				t.nextRetry = time.Time{}
+				if t.state != "up" {
+					t.state = "up"
+					t.lastErr = ""
+					t.nextRetry = time.Time{}
+				}
 				t.mu.Unlock()
 			}
 		}

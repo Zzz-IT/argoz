@@ -71,6 +71,18 @@ bash <(wget -qO- https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh)
 
 填完显示确认页，回车即创建；创建后自动等待域名并进入详情。
 
+### 节点自检
+
+详情页按 `7`，逐层打印：
+
+```
+  ✓ 本地监听  127.0.0.1:20002     可连接
+  ✓ DNS       laxgo.zhzz.us.ci   → 104.21.x.x, 172.67.x.x
+  ✓ 端到端    HTTP 404  38ms  server=cloudflare
+      CF-Ray: 8c1f2a3b4d5e6f70
+      提示：1033/530 多为 CF 面板路由未指向 http://localhost:20002
+```
+
 ## 特性
 
 - **纯文本菜单**：零第三方依赖，只有标准库
@@ -148,7 +160,7 @@ bash install.sh --uninstall --purge  # 连配置、日志、cloudflared 一起�
 | 并发上限 | 128 | 每节点活跃 WS 会话数，超出 503（每会话约 41KB） |
 | 保活间隔 | 30s | WS ping 周期 |
 | 空闲超时 | 5m | 双向无流量强制下线 |
-| 监听与端口段 | 127.0.0.1 / 20000-20100 | 自动分配时的候选范围 |
+| 监听与端口段 | 127.0.0.1 / 1-65535 | 自动分配时的候选范围（从 1024 起） |
 | ECH 注入 | 开 | 链接/YAML 的 SNI 写成 cloudflare-ech.com |
 | 日志级别 | info | error / warn / info / debug |
 
@@ -174,7 +186,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o argoz .
 ## 开发
 
 ```bash
-go test ./... -race     # 51 个用例：协议端到端、退避时序、探针、日志、创建校验、卸载
+go test ./... -race     # 56 个用例：协议端到端、退避时序、探针、日志、创建校验、卸载
 go vet ./...
 ```
 

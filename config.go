@@ -18,7 +18,7 @@ const (
 )
 
 // AppVersion 发布时由 CI 通过 -ldflags "-X main.AppVersion=v1.0.0" 注入
-var AppVersion = "v1.1.0"
+var AppVersion = "v1.1.1"
 
 // TunnelCfg Argo 隧道配置
 type TunnelCfg struct {
@@ -102,7 +102,7 @@ type Config struct {
 func defaultSettings() Settings {
 	return Settings{
 		Listen:      "127.0.0.1",
-		PortRange:   "20000-20100",
+		PortRange:   "1-65535",
 		MaxConns:    128,
 		Keepalive:   "30s",
 		IdleTimeout: "5m",
@@ -164,6 +164,13 @@ func (c *Config) fixup() {
 	d := defaultSettings()
 	if c.Version == 0 {
 		c.Version = 1
+	}
+	// v2：默认端口段从 20000-20100 放开到全端口（只迁移一次）
+	if c.Version < 2 {
+		if c.Settings.PortRange == "20000-20100" {
+			c.Settings.PortRange = d.PortRange
+		}
+		c.Version = 2
 	}
 	if c.Settings.Listen == "" {
 		c.Settings.Listen = d.Listen

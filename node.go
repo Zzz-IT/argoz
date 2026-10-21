@@ -134,7 +134,8 @@ func showNodeDetail(e *Engine, id string) {
 		}
 		fmt.Println()
 
-		fmt.Printf("  1 复制链接   2 复制 YAML   3 写入文件   4 编辑   5 重启隧道   6 删除   0 返回\n\n")
+		fmt.Printf("  1 复制链接   2 复制 YAML   3 写入文件   4 编辑\n")
+		fmt.Printf("  5 重启隧道   6 删除       7 自检       0 返回\n\n")
 
 		switch ReadLine("  请输入选项 > ") {
 		case "1":
@@ -185,6 +186,8 @@ func showNodeDetail(e *Engine, id string) {
 				}
 			}
 			Pause("")
+		case "7":
+			showDiag(e, id)
 		case "6":
 			if Confirm(fmt.Sprintf("  确认删除节点 [%s] ?", node.Name)) {
 				if err := e.Delete(id); err != nil {
@@ -488,7 +491,7 @@ func promptPort(e *Engine) int {
 			LogErr("端口需为 1-65535，请重新输入")
 			continue
 		}
-		if err := e.CheckPortFree(p); err != nil {
+		if err := e.CheckPortFree(p, ""); err != nil {
 			LogErr("%v", err)
 			continue
 		}

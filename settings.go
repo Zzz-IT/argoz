@@ -23,7 +23,7 @@ func showSettings(e *Engine) {
 		fmt.Printf("  2 保活间隔        %s (WS ping)\n", s.Keepalive)
 		fmt.Printf("  3 空闲超时        %s\n", s.IdleTimeout)
 		fmt.Printf("  4 监听与端口段    %s  %s\n", s.Listen, s.PortRange)
-		fmt.Printf("  5 ECH 注入        %s\n", boolText(s.ECH))
+		fmt.Printf("  5 ECH 注入        %s  %s\n", boolText(s.ECH), stMutedHint("仅在 CF 为该域名启用 ECH 时有效"))
 		fmt.Printf("  6 日志级别        %s\n", s.LogLevel)
 		fmt.Printf("    日志文件        %s\n", orDash(LogFilePath()))
 		fmt.Printf("  0 返回\n\n")

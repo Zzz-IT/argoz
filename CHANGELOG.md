@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-22
+
+### 修复
+
+- **VLESS 地址类型编号错误**：VLESS 是 `1=IPv4 / 2=域名 / 3=IPv6`，此前误用了 SOCKS5 的编号（`3=域名 / 4=IPv6`），导致所有以域名为目标的 VLESS 连接握手失败，日志报 `handshake: 不支持的地址类型: 2`。
+- **固定隧道误报 up**：改为必须收到 cloudflared 的 `Registered tunnel connection`（临时隧道抓到域名亦可）才置为 up；45 秒未注册自动杀掉重试。
+- **编辑端口静默顺延**：手改端口冲突时现在明确报错并回滚，不再偷偷换成别的端口。
+
+### 变更
+
+- 默认端口段从 `20000-20100` 放开为 **`1-65535`**，自动分配从 1024 起（避开特权端口），旧配置自动迁移一次。
+- 节点详情新增 **`7 自检`**：本地监听 / DNS / 端到端 HTTPS（显示状态码、CF-Ray、响应片段），并提示 CF 路由与 ECH 注意事项。
+
 ## [1.1.0] - 2026-10-22
 
 ### 变更
@@ -61,7 +74,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.0
 [1.0.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.0.0

@@ -65,3 +65,8 @@ func ConfirmYes(prompt string) bool {
 	s := ReadLine(prompt + " (Y/n): ")
 	return s == "" || strings.EqualFold(s, "y") || strings.EqualFold(s, "yes")
 }
+
+// stMutedHint 次要说明文字
+func stMutedHint(s string) string {
+	return ColorGrey + s + ColorReset
+}

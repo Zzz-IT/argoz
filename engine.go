@@ -234,6 +234,10 @@ func (e *Engine) allocPort(s Settings, excludeID string) (int, net.Listener, err
 	}
 	e.mu.RUnlock()
 
+	// 自动分配从 1024 起，避免捡到需要 root 的特权端口
+	if lo < 1024 {
+		lo = 1024
+	}
 	for p := lo; p <= hi; p++ {
 		if used[p] {
 			continue
@@ -263,12 +267,12 @@ type NodeSpec struct {
 }
 
 // CheckPortFree 校验端口可用：既未被其他节点占用，也能真实绑定
-func (e *Engine) CheckPortFree(port int) error {
+func (e *Engine) CheckPortFree(port int, excludeID string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("端口需为 1-65535")
 	}
 	for _, n := range e.Nodes() {
-		if n.Port == port {
+		if n.Port == port && n.ID != excludeID {
 			return fmt.Errorf("端口 %d 已被节点 [%s] 占用", port, n.Name)
 		}
 	}
@@ -348,7 +352,7 @@ func (e *Engine) Create(spec NodeSpec) (Node, error) {
 	var port int
 	var err error
 	if spec.Port != 0 {
-		if err := e.CheckPortFree(spec.Port); err != nil {
+		if err := e.CheckPortFree(spec.Port, ""); err != nil {
 			return Node{}, err
 		}
 		port = spec.Port
@@ -423,6 +427,18 @@ func (e *Engine) Update(id string, mutate func(*Node) error) error {
 	needRebind := before.Port != node.Port || before.Path == ""
 	switch {
 	case needRebind:
+		// 手改端口冲突时明确报错并回滚，不静默顺延
+		if before.Port != node.Port {
+			if err := e.CheckPortFree(node.Port, id); err != nil {
+				e.mu.Lock()
+				if p := e.cfg.find(id); p != nil {
+					p.Port = before.Port
+				}
+				_ = e.cfg.Save()
+				e.mu.Unlock()
+				return err
+			}
+		}
 		rt.stopServer()
 		ln, port, err := e.bindNode(&node, rt.settings)
 		if err != nil {
