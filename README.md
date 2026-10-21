@@ -22,7 +22,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh
 bash <(wget -qO- https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh)
 ```
 
-装完执行 `argoz` 进面板。脚本会：识别发行版与架构 → 补齐 Alpine 证书 → 校验产物是 ELF → 安装二进制 → 建数据目录 → 预装 cloudflared → 装 systemd/OpenRC 服务并设为开机自启。
+装完执行 `argoz` 进面板。脚本会：识别发行版与架构 → 补齐 Alpine 证书 → 校验产物是 ELF → 安装二进制 → 建数据目录 → 预装 cloudflared → 调用 `argoz service install` 装 systemd/OpenRC 服务并启动。
 
 ## 界面
 
@@ -104,7 +104,39 @@ bash <(wget -qO- https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh)
 - **5 级保活 + 分层重试**：2s→4s→8s→3min×20→60min，±20% 抖动，稳定 10 分钟清零
 - **端到端探针**：有流量时 60s、空闲 3min 探测域名，连续失败重启隧道
 - **日志**：4 级过滤、5MB 轮转、面板内可查
+- **内置服务托管**：`argoz service install/status/uninstall` 自动适配 systemd / OpenRC
+- **自更新**：`argoz update` 下载、SHA256 校验、原子替换并重启服务；`--check` 只查版本
+- **Alpine 自愈**：daemon 启动时检查并尝试补齐 `ca-certificates` / `tzdata` / `gcompat`
+- **孤儿清理**：cloudflared 设置 `Pdeathsig`，daemon 启动时按节点端口/Token 精确清理遗留进程
 - **卸载**：菜单 `9` / `install.sh --uninstall`
+
+## 快捷命令
+
+安装后会自动创建符号链接 `az`（与 `argoz` 同目录）：
+
+```bash
+az          # 唤出面板，等同于 argoz
+az --version
+```
+
+## 代码结构
+
+\`\`\`
+argoz/
+├── main.go                入口：flag 分发、daemon / panel / supervisor
+├── supervise.go           自守护父进程
+├── internal/
+│   ├── config/            Node / Settings / Config、URI 与 YAML 生成
+│   ├── core/              engine、relay(WS+HTTP)、tunnel、health、lock、update、uninstall
+│   ├── rpc/               本地控制通道（服务端 + 客户端）
+│   ├── panel/             全部终端页面（列表/详情/设置/日志/状态/更新/自检）
+│   ├── protocol/          VLESS / Trojan 握手
+│   ├── sys/               systemd/OpenRC 模板与安装、环境自检、az 快捷命令
+│   ├── logx/              分级日志 + 轮转
+│   └── xutil/             随机/UUID/原子写/格式化/终端宽度
+\`\`\`
+
+依赖方向单向：`panel → rpc → core → {config, tunnel, relay, protocol, sys, logx, xutil}`，没有循环。
 
 ## 进程模型
 
@@ -118,14 +150,37 @@ argoz --supervise   supervisor：拉起并看护 daemon，容器没有 init 时�
 - 有 systemd / OpenRC 时由系统托管 \`argoz -d\`，不需要 supervisor
 - 同一数据目录只允许一个 daemon（\`argoz.lock\`），重复启动会被拒绝
 
+## 面板
+
+主菜单：
+
+\`\`\`
+  argoz v1.2.0    ● 运行中   节点 3/3   连接 15   ↑1.2GB ↓8.7GB
+  守护进程   进程号 563 · 已运行 3 小时 12 分 · 内存 12.4MB
+
+  1 节点管理    2 新建节点    3 设置    4 日志    5 检查更新    6 运行状态    9 卸载    0 退出
+\`\`\`
+
+- **节点列表**：宽度自适应、分页（15 行/页）、\`/\` 搜索、\`r\` 刷新
+- **节点详情**：链接自动折行、\`n/p\` 翻屏，含复制链接 / 复制 YAML / 写入文件 / 编辑 / 重启 / 删除 / 自检
+- **日志**：\`n/p\` 翻页，\`e/w/i/d/a\` 级别过滤，\`g\` 跳到最新
+- **检查更新**：查询 GitHub Releases 并一键升级（下载 → SHA256 校验 → ELF 校验 → 原子替换 → 重启服务）
+- **运行状态**：采样 1 秒计算每节点实时上下行速率
+- 终端宽度可用环境变量覆盖：\`ARGOZ_COLS=70 ARGOZ_LINES=30 argoz\`
+
 ## 使用
 
 ```bash
 argoz              # 面板（自动连接/拉起后台 daemon）
 argoz -d           # daemon（systemd / OpenRC 托管）
 argoz --supervise  # 自守护（容器无 init）
+argoz service install    # 安装并启动 systemd/OpenRC 服务
+argoz service status     # 查看服务状态
+argoz service uninstall  # 只移除服务，保留二进制与数据
+argoz update --check   # 检查新版本
+argoz update           # 下载、校验、原子替换并重启服务
 argoz --version
-argoz -dir /path   # 指定数据目录
+argoz -dir /path       # 指定数据目录
 ```
 
 ## 保活与自愈（5 级）
@@ -175,6 +230,7 @@ bash install.sh --uninstall --purge  # 连配置、日志、cloudflared 一起�
 | `/usr/local/etc/argoz/config.json` | 配置（0600） |
 | `/usr/local/etc/argoz/argoz.log` | 运行日志 |
 | `/usr/local/etc/argoz/nodes.txt` | 导出的链接与 YAML |
+| `/usr/local/etc/argoz/run/<nodeID>.pid` | cloudflared 进程 PID（用于孤儿清理） |
 
 ## 设置项
 
@@ -209,7 +265,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o argoz .
 ## 开发
 
 ```bash
-go test ./... -race     # 62 个用例：协议端到端、退避时序、探针、日志、创建校验、卸载
+go test ./... -race     # 60+ 个用例：协议端到端、WS 帧边界、服务/更新/孤儿清理、退避时序、探针、日志、创建校验、卸载
 go vet ./...
 ```
 

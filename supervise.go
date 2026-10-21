@@ -1,6 +1,7 @@
 package main
 
 import (
+	"argoz/internal/core"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 
 // runSupervisor 父进程守护：拉起 argoz -d，退出后自动重启（容器没有 init 时用）
 func runSupervisor(dir string) {
-	lock, err := acquireLock(dir, "argoz-supervisor.lock")
+	lock, err := core.AcquireLock(dir, "argoz-supervisor.lock")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -55,6 +56,7 @@ func runSupervisor(dir string) {
 		}
 
 		cmd := exec.Command(exe, "-d", "-dir", dir)
+		cmd.SysProcAttr = core.ChildDeathAttr()
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		mu.Lock()

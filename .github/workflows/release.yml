@@ -37,7 +37,7 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           go build -trimpath \
-            -ldflags "-s -w -X main.AppVersion=${{ github.ref_name }}" \
+            -ldflags "-s -w -X argoz/internal/config.Version=${{ github.ref_name }}" \
             -o ${{ matrix.asset }} .
 
       - uses: actions/upload-artifact@v4

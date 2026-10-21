@@ -2,7 +2,40 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
-## [Unreleased]
+## [1.3.0] - 2026-10-22
+
+### 新增
+
+- **快捷命令 `az`**：安装时自动创建 `/usr/local/bin/az -> argoz` 符号链接，输入 `az` 即唤出面板；`install.sh` 与 `argoz service install` 都会补齐，卸载时一并删除（同名非链接文件不覆盖）。
+- **内置服务托管**：`argoz service install | status | uninstall`，自动适配 systemd 与 OpenRC；`install.sh` 改为调用该命令，避免两套模板漂移。
+- **自更新**：`argoz update` 从 GitHub Release 下载对应架构二进制，校验 SHA256 与 ELF 后原子替换，并尝试重启已安装服务；`argoz update --check` 只检查版本。
+- **Alpine 运行时自检**：daemon 启动时检查 `ca-certificates` / `tzdata` / `gcompat`，root 下尝试 `apk add`，非 root 或失败只告警。
+- **孤儿 cloudflared 清理**：Linux 下给 cloudflared 与 supervisor→daemon 子进程设置 `Pdeathsig`，daemon 启动时按节点端口 / Token 精确清理遗留进程，不使用宽泛 `pkill -f`。
+- **运行状态页（`6`）**：采样 1 秒计算每节点实时上下行速率。
+- **检查更新页（`5`）**：查询 GitHub Releases、展示更新说明、一键下载校验替换并重启服务。
+
+### 变更（界面）
+
+- 状态与标签全面中文化：固定隧道 / 临时隧道、运行中 / 未运行 / 启动中 / 降级 / 错误、30 秒 / 5 分钟等；**配置里仍存 `fixed`/`temp`/`vless`**，不影响兼容性。
+- 节点列表：按终端宽度自适应（≥96 列显示域名，≥76 列显示协议），15 行分页，`/` 搜索，`r` 刷新。
+- 节点详情：超长分享链接主动折行缩进；内容超过一屏时用 `n/p` 翻屏。
+- 日志：分页 + 级别过滤（`e` 错误 / `w` 警告 / `i` 信息 / `d` 调试 / `a` 全部 / `g` 最新）。
+- 设置页底部显示守护进程进程号、运行时长、内存占用。
+- 主菜单改为两行状态（服务 + 守护进程），增加降级告警行与新版本提示行。
+
+### 变更（代码结构）
+
+- 单体 63 个文件拆成 8 个包：`internal/{config,core,rpc,panel,protocol,sys,logx,xutil}`，`main` 仅保留入口（约 190 行）。
+- 依赖单向：`panel → rpc → core → 基础包`，无循环。
+- 测试随包迁移（config / core / logx / rpc / sys）。
+- 版本变量移到 `config.Version`，发布流水线 ldflags 同步更新为 `-X argoz/internal/config.Version`。
+
+### 修复
+
+- 自更新替换二进制后对目标目录执行 fsync，降低掉电丢目录项的风险。
+- 非 Alpine 系统缺少 CA 证书时输出明确告警。
+- 非 root 运行时，孤儿 cloudflared 清理只处理同用户进程并记录调试日志。
+- 降低 daemon 被 `kill -9` 后重复启动 cloudflared、重复隧道的风险。
 
 ## [1.2.0] - 2026-10-22
 
@@ -98,7 +131,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.2.0
 [1.1.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.2
 [1.1.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.1

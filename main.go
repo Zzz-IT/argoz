@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
-)
 
-func (c *Config) Dir() string { return filepath.Dir(c.path) }
+	"argoz/internal/config"
+	"argoz/internal/core"
+	"argoz/internal/logx"
+	"argoz/internal/panel"
+	"argoz/internal/rpc"
+	"argoz/internal/sys"
+)
 
 func main() {
 	dir := flag.String("dir", "", "数据目录（默认 /usr/local/etc/argoz）")
@@ -22,13 +26,33 @@ func main() {
 	flag.Parse()
 
 	if *showVer {
-		fmt.Printf("%s %s\n", AppName, AppVersion)
+		fmt.Printf("%s %s\n", config.AppName, config.Version)
 		return
 	}
 
 	dataDir := *dir
 	if dataDir == "" {
-		dataDir = DefaultDataDir()
+		dataDir = config.DefaultDataDir()
+	}
+
+	if args := flag.Args(); len(args) > 0 {
+		switch args[0] {
+		case "service":
+			if err := sys.RunServiceCommandLine(args[1:], dataDir); err != nil {
+				fmt.Fprintln(os.Stderr, "错误:", err)
+				os.Exit(1)
+			}
+			return
+		case "update":
+			if err := core.RunUpdateCommandLine(args[1:], dataDir); err != nil {
+				fmt.Fprintln(os.Stderr, "错误:", err)
+				os.Exit(1)
+			}
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "未知命令: %s（可用: service, update）\n", args[0])
+			os.Exit(2)
+		}
 	}
 
 	switch {
@@ -43,115 +67,82 @@ func main() {
 
 // runDaemon 常驻引擎：跑所有节点 + 保活 + 本地控制通道
 func runDaemon(dir string) {
-	lock, err := acquireLock(dir, "argoz.lock")
+	lock, err := core.AcquireLock(dir, "argoz.lock")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 	defer lock.Release()
 
-	cfg, err := LoadConfig(dir)
+	cfg, err := config.LoadConfig(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := InitLog(cfg.Dir(), cfg.Settings.LogLevel); err != nil {
+	if err := logx.InitLog(cfg.Dir(), cfg.Settings.LogLevel); err != nil {
 		fmt.Fprintf(os.Stderr, "打开日志文件失败: %v\n", err)
 	}
-	defer CloseLog()
+	defer logx.CloseLog()
 
-	e := NewEngine(cfg, cfg.Dir())
+	sys.CheckRuntimeEnv()
+
+	for _, msg := range core.CleanupOrphanCloudflared(cfg) {
+		logx.LogWarn("%s", msg)
+	}
+
+	e := core.NewEngine(cfg, cfg.Dir())
 	e.SetDaemon(true)
 	e.Start()
 	e.StartHealth()
 	defer e.Shutdown()
 
-	srv, err := startRPC(e, cfg.Dir())
+	srv, err := rpc.Start(e, cfg.Dir())
 	if err != nil {
-		LogErr("启动控制通道失败: %v", err)
+		logx.LogErr("启动控制通道失败: %v", err)
 		os.Exit(1)
 	}
 	defer srv.Shutdown()
 
-	// 后台预热 cloudflared，不阻塞节点启动
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		if p, err := ensureCloudflared(ctx); err == nil {
-			LogDebug("cloudflared 就绪: %s", p)
+		if p, err := core.EnsureCloudflared(ctx); err == nil {
+			logx.LogDebug("cloudflared 就绪: %s", p)
 		} else {
-			LogWarn("cloudflared 未就绪: %v", err)
+			logx.LogWarn("cloudflared 未就绪: %v", err)
 		}
 	}()
 
-	LogInfo("%s %s daemon 已启动，节点 %d 个，配置目录 %s", AppName, AppVersion, len(cfg.Nodes), cfg.Dir())
+	logx.LogInfo("%s %s daemon 已启动，节点 %d 个，配置目录 %s",
+		config.AppName, config.Version, len(cfg.Nodes), cfg.Dir())
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	select {
 	case <-ch:
-		LogInfo("收到退出信号")
-	case <-srv.done:
-		LogInfo("控制通道关闭")
+		logx.LogInfo("收到退出信号")
+	case <-srv.Done():
+		logx.LogInfo("控制通道关闭")
 	}
-	LogInfo("daemon 正在退出...")
+	logx.LogInfo("daemon 正在退出...")
 }
 
 // runPanel 面板：只做客户端，退出不影响 daemon
 func runPanel(dir string) {
-	cfg, err := LoadConfig(dir)
+	cfg, err := config.LoadConfig(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	client, err := ensureDaemon(cfg.Dir())
+	client, err := rpc.EnsureDaemon(cfg.Dir())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 	defer client.Close()
 
-	SetConsoleLevel(LevelWarn)
-	showMainMenu(client)
-}
-
-func showMainMenu(e EngineAPI) {
-	for {
-		Clear()
-		nodes, conns, up, down := e.Totals()
-		all := e.Nodes()
-
-		fmt.Printf("\n  %sargoz %s%s    %s● running%s   ↑%s ↓%s   节点 %d/%d   conns %d\n\n",
-			ColorWhite, AppVersion, ColorReset,
-			ColorGreen, ColorReset,
-			humanBytes(up), humanBytes(down), nodes, len(all), conns)
-
-		fmt.Printf("  1 节点管理      2 新建节点      3 设置      4 日志      9 卸载      0 退出\n\n")
-
-		switch ReadLine("  > ") {
-		case "1":
-			for {
-				id := showNodeList(e)
-				if id == "" {
-					break
-				}
-				showNodeDetail(e, id)
-			}
-		case "2":
-			wizardCreate(e)
-		case "3":
-			showSettings(e)
-		case "4":
-			showLogs(e)
-		case "9":
-			if showUninstall(e) {
-				return
-			}
-		case "0", "q", "":
-			LogInfo("再见（daemon 仍在后台运行）")
-			return
-		}
-	}
+	logx.SetConsoleLevel(logx.LevelWarn)
+	panel.Run(client)
 }

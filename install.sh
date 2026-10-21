@@ -44,6 +44,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     ok "已移除 OpenRC 服务"
   fi
   rm -f /usr/local/bin/argoz && ok "已删除 /usr/local/bin/argoz"
+  rm -f /usr/local/bin/az && ok "已删除快捷命令 az"
 
   if [[ "$PURGE" -eq 1 ]]; then
     rm -rf "${ARGOZ_DIR:-/usr/local/etc/argoz}" && ok "已删除配置与日志目录"
@@ -113,6 +114,7 @@ fi
 install -m 0755 "$TMP" "$BIN_PATH"
 rm -f "$TMP"
 ok "argoz 已安装: $BIN_PATH ($("$BIN_PATH" --version))"
+ln -sf "$BIN_PATH" "$(dirname "$BIN_PATH")/az" 2>/dev/null && ok "快捷命令已创建: az（直接输入 az 唤出面板）"
 
 # ---------- 5. 数据目录 ----------
 mkdir -p "$DATA_DIR"
@@ -140,62 +142,14 @@ else
 fi
 
 # ---------- 7. 服务托管 ----------
-if command -v systemctl >/dev/null 2>&1; then
-  cat > /etc/systemd/system/argoz.service <<'UNIT'
-[Unit]
-Description=argoz - Argo WebSocket relay
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/argoz -d
-Restart=always
-RestartSec=3
-LimitNOFILE=65535
-Environment=GOMEMLIMIT=96MiB
-Environment=GOGC=50
-MemoryMax=128M
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths=/usr/local/etc/argoz
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-  systemctl daemon-reload
-  systemctl enable argoz >/dev/null 2>&1 || true
-  ok "systemd 服务已安装并设为开机自启"
-  echo -e "     ${WHITE}systemctl start argoz${NC} 启动   ${WHITE}journalctl -u argoz -f${NC} 看日志"
-
-elif command -v rc-update >/dev/null 2>&1; then
-  cat > /etc/init.d/argoz <<'OPENRC'
-#!/sbin/openrc-run
-description="argoz - Argo WebSocket relay"
-command="/usr/local/bin/argoz"
-command_args="-d"
-supervisor="supervise-daemon"
-respawn_delay=3
-respawn_max=0
-pidfile="/run/argoz.pid"
-output_log="/var/log/argoz.log"
-error_log="/var/log/argoz.log"
-export GOMEMLIMIT=96MiB
-export GOGC=50
-depend() { need net; after firewall; use dns; }
-OPENRC
-  chmod +x /etc/init.d/argoz
-  rc-update add argoz default >/dev/null 2>&1 || true
-  ok "OpenRC 服务已安装并设为开机自启"
-  echo -e "     ${WHITE}rc-service argoz start${NC} 启动   ${WHITE}tail -f /var/log/argoz.log${NC} 看日志"
-
+info "安装 systemd / OpenRC 服务 ..."
+if "$BIN_PATH" service install -bin "$BIN_PATH" -dir "$DATA_DIR"; then
+  ok "服务已安装并启动"
+  echo -e "     ${WHITE}argoz service status${NC} 查看状态   ${WHITE}argoz service uninstall${NC} 卸载服务"
 else
-  warn "未检测到 systemd/OpenRC"
-  echo -e "     请手动运行: ${WHITE}nohup argoz --supervise >/var/log/argoz.log 2>&1 &${NC}"
-  echo -e "     开机自启可加入 crontab: ${WHITE}@reboot /usr/local/bin/argoz -d${NC}"
+  warn "服务安装失败，可稍后手动执行："
+  echo -e "     ${WHITE}$BIN_PATH service install -bin $BIN_PATH -dir $DATA_DIR${NC}"
+  echo -e "     无 init 系统可手动运行: ${WHITE}nohup argoz --supervise >/var/log/argoz.log 2>&1 &${NC}"
 fi
 
 # ---------- 8. 完成 ----------
