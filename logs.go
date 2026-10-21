@@ -27,7 +27,7 @@ func tailLines(path string, n int) ([]string, error) {
 }
 
 // showLogs 日志查看页
-func showLogs(e *Engine) {
+func showLogs(e EngineAPI) {
 	Clear()
 	Title("运行日志")
 

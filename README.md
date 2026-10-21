@@ -106,11 +106,24 @@ bash <(wget -qO- https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh)
 - **日志**：4 级过滤、5MB 轮转、面板内可查
 - **卸载**：菜单 `9` / `install.sh --uninstall`
 
+## 进程模型
+
+\`\`\`
+argoz -d            daemon：跑节点 + 5 级保活 + 本地控制通道
+argoz               panel ：只做客户端，连 daemon 读写配置，退出不影响服务
+argoz --supervise   supervisor：拉起并看护 daemon，容器没有 init 时用
+\`\`\`
+
+- 面板启动时若没有 daemon，会自动后台拉起一个
+- 有 systemd / OpenRC 时由系统托管 \`argoz -d\`，不需要 supervisor
+- 同一数据目录只允许一个 daemon（\`argoz.lock\`），重复启动会被拒绝
+
 ## 使用
 
 ```bash
-argoz              # 交互面板
-argoz -d           # 无菜单守护（systemd / OpenRC 用）
+argoz              # 面板（自动连接/拉起后台 daemon）
+argoz -d           # daemon（systemd / OpenRC 托管）
+argoz --supervise  # 自守护（容器无 init）
 argoz --version
 argoz -dir /path   # 指定数据目录
 ```
@@ -196,7 +209,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o argoz .
 ## 开发
 
 ```bash
-go test ./... -race     # 56 个用例：协议端到端、退避时序、探针、日志、创建校验、卸载
+go test ./... -race     # 62 个用例：协议端到端、退避时序、探针、日志、创建校验、卸载
 go vet ./...
 ```
 

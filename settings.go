@@ -14,7 +14,7 @@ func boolText(b bool) string {
 }
 
 // showSettings 设置页
-func showSettings(e *Engine) {
+func showSettings(e EngineAPI) {
 	for {
 		s := e.Settings()
 		Clear()
@@ -94,7 +94,7 @@ func showSettings(e *Engine) {
 	}
 }
 
-func saveSettings(e *Engine, s Settings) {
+func saveSettings(e EngineAPI, s Settings) {
 	if err := e.SaveSettings(s); err != nil {
 		LogErr("保存失败: %v", err)
 	} else {

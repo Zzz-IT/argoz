@@ -26,7 +26,7 @@ func stateCell(state string, w int) string {
 }
 
 // showNodeList 节点列表；返回选中的节点 ID（空串表示返回）
-func showNodeList(e *Engine) string {
+func showNodeList(e EngineAPI) string {
 	for {
 		sts := e.Statuses()
 		Clear()
@@ -79,7 +79,7 @@ func showNodeList(e *Engine) string {
 }
 
 // showNodeDetail 节点详情页
-func showNodeDetail(e *Engine, id string) {
+func showNodeDetail(e EngineAPI, id string) {
 	for {
 		node, ok := e.Node(id)
 		if !ok {
@@ -163,7 +163,7 @@ func showNodeDetail(e *Engine, id string) {
 				Pause("")
 				continue
 			}
-			p, err := exportToFile(e.dataDir, node.Name, body)
+			p, err := exportToFile(e.DataDir(), node.Name, body)
 			if err != nil {
 				LogErr("写入失败: %v", err)
 			} else {
@@ -224,7 +224,7 @@ func orDash(s string) string {
 }
 
 // showEditMenu 编辑节点
-func showEditMenu(e *Engine, id string) {
+func showEditMenu(e EngineAPI, id string) {
 	for {
 		node, ok := e.Node(id)
 		if !ok {
@@ -346,7 +346,7 @@ func showEditMenu(e *Engine, id string) {
 }
 
 // waitDomain 轮询等待临时隧道拿到域名
-func waitDomain(e *Engine, id string, timeout time.Duration) (string, bool) {
+func waitDomain(e EngineAPI, id string, timeout time.Duration) (string, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if n, ok := e.Node(id); ok && n.Tunnel.Domain != "" {
@@ -377,7 +377,7 @@ func (e *Engine) RestartTunnel(id string) error {
 }
 
 // wizardCreate 新建节点向导
-func wizardCreate(e *Engine) {
+func wizardCreate(e EngineAPI) {
 	Clear()
 	Title("新建节点")
 
@@ -480,7 +480,7 @@ func wizardCreate(e *Engine) {
 }
 
 // promptPort 询问端口；回车 = 自动分配
-func promptPort(e *Engine) int {
+func promptPort(e EngineAPI) int {
 	for {
 		raw := ReadLine("  端口 (回车自动分配): ")
 		if raw == "" {
@@ -515,7 +515,7 @@ func promptPath() string {
 }
 
 // promptCredential 询问 UUID / 密码；回车 = 自动生成
-func promptCredential(e *Engine, proto string) string {
+func promptCredential(e EngineAPI, proto string) string {
 	if proto == "trojan" {
 		for {
 			raw := ReadLine("  密码 (回车随机生成，8-64 位): ")

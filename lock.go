@@ -14,8 +14,11 @@ type instanceLock struct {
 }
 
 // acquireLock 在数据目录创建锁文件；已有存活实例则返回错误
-func acquireLock(dir string) (*instanceLock, error) {
-	p := filepath.Join(dir, "argoz.lock")
+func acquireLock(dir, name string) (*instanceLock, error) {
+	if name == "" {
+		name = "argoz.lock"
+	}
+	p := filepath.Join(dir, name)
 
 	for attempt := 0; attempt < 3; attempt++ {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

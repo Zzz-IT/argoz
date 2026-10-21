@@ -10,13 +10,13 @@ import (
 
 func TestLockRejectsSecondInstance(t *testing.T) {
 	dir := t.TempDir()
-	l1, err := acquireLock(dir)
+	l1, err := acquireLock(dir, "")
 	if err != nil {
 		t.Fatalf("首次加锁失败: %v", err)
 	}
 	defer l1.Release()
 
-	if _, err := acquireLock(dir); err == nil {
+	if _, err := acquireLock(dir, ""); err == nil {
 		t.Fatal("第二个实例应被拒绝")
 	}
 }
@@ -29,7 +29,7 @@ func TestLockTakesOverStale(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	l, err := acquireLock(dir)
+	l, err := acquireLock(dir, "")
 	if err != nil {
 		t.Fatalf("陈旧锁应可接管: %v", err)
 	}

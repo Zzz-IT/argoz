@@ -194,7 +194,7 @@ OPENRC
 
 else
   warn "未检测到 systemd/OpenRC"
-  echo -e "     请手动运行: ${WHITE}nohup argoz -d >/var/log/argoz.log 2>&1 &${NC}"
+  echo -e "     请手动运行: ${WHITE}nohup argoz --supervise >/var/log/argoz.log 2>&1 &${NC}"
   echo -e "     开机自启可加入 crontab: ${WHITE}@reboot /usr/local/bin/argoz -d${NC}"
 fi
 

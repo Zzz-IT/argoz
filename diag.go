@@ -12,7 +12,7 @@ import (
 )
 
 // showDiag 节点自检：本地监听 / DNS / 端到端 HTTPS，用来定位「连不上」卡在哪一层
-func showDiag(e *Engine, id string) {
+func showDiag(e EngineAPI, id string) {
 	node, ok := e.Node(id)
 	if !ok {
 		return

@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-22
+
+### 变更
+
+- **改为双进程模型**：\`argoz\` 变成纯客户端面板，\`argoz -d\` 是常驻 daemon（跑节点与保活），两者通过本地 socket（unix socket，失败退化本地 TCP）通信。
+  - 面板退出不再影响服务；面板崩溃也不会带走节点
+  - 面板启动时若没有 daemon，会自动在后台拉起一个
+  - 多个面板可以同时连接，写操作由 daemon 串行执行
+- 新增 \`argoz --supervise\`：自带看护的父进程，daemon 崩溃后按 1s→30s 退避重启，适合没有 systemd/OpenRC 的容器。
+- 单实例锁拆成两把：\`argoz.lock\`（daemon）与 \`argoz-supervisor.lock\`（supervisor），互不干扰。
+
+### 说明
+
+- systemd / OpenRC 仍然直接托管 \`argoz -d\`，不需要 supervisor
+
 ## [1.1.2] - 2026-10-22
 
 ### 修复
@@ -83,7 +98,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.2.0
 [1.1.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.2
 [1.1.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.0

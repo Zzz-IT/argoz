@@ -568,3 +568,6 @@ func (e *Engine) persistLastError(id, msg string) {
 		_ = e.cfg.Save()
 	}
 }
+
+// DataDir 返回数据目录
+func (e *Engine) DataDir() string { return e.dataDir }

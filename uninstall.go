@@ -110,7 +110,7 @@ func (e *Engine) Uninstall(p uninstallPlan) ([]string, error) {
 }
 
 // showUninstall 经典菜单里的卸载流程；返回 true 表示已执行卸载（调用方应退出）
-func showUninstall(e *Engine) bool {
+func showUninstall(e EngineAPI) bool {
 	Clear()
 	Title("卸载 argoz")
 	fmt.Println("  将停止所有节点，并删除 systemd / OpenRC 服务与 argoz 二进制。")

@@ -15,7 +15,8 @@ func (c *Config) Dir() string { return filepath.Dir(c.path) }
 
 func main() {
 	dir := flag.String("dir", "", "数据目录（默认 /usr/local/etc/argoz）")
-	daemon := flag.Bool("d", false, "无菜单守护模式")
+	daemonMode := flag.Bool("d", false, "守护进程模式（无菜单，供 systemd/OpenRC 托管）")
+	supervise := flag.Bool("supervise", false, "自守护模式：拉起并看护 daemon（容器无 init 时用）")
 	showVer := flag.Bool("version", false, "显示版本")
 	flag.Bool("classic", false, "兼容旧参数（现在默认就是行式菜单）")
 	flag.Parse()
@@ -25,7 +26,31 @@ func main() {
 		return
 	}
 
-	cfg, err := LoadConfig(*dir)
+	dataDir := *dir
+	if dataDir == "" {
+		dataDir = DefaultDataDir()
+	}
+
+	switch {
+	case *supervise:
+		runSupervisor(dataDir)
+	case *daemonMode:
+		runDaemon(dataDir)
+	default:
+		runPanel(dataDir)
+	}
+}
+
+// runDaemon 常驻引擎：跑所有节点 + 保活 + 本地控制通道
+func runDaemon(dir string) {
+	lock, err := acquireLock(dir, "argoz.lock")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	defer lock.Release()
+
+	cfg, err := LoadConfig(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
@@ -37,11 +62,19 @@ func main() {
 	defer CloseLog()
 
 	e := NewEngine(cfg, cfg.Dir())
-	e.SetDaemon(*daemon)
+	e.SetDaemon(true)
 	e.Start()
 	e.StartHealth()
+	defer e.Shutdown()
 
-	// 后台预热 cloudflared：不阻塞节点启动，装好后后续节点直接可用
+	srv, err := startRPC(e, cfg.Dir())
+	if err != nil {
+		LogErr("启动控制通道失败: %v", err)
+		os.Exit(1)
+	}
+	defer srv.Shutdown()
+
+	// 后台预热 cloudflared，不阻塞节点启动
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
@@ -51,23 +84,40 @@ func main() {
 			LogWarn("cloudflared 未就绪: %v", err)
 		}
 	}()
-	defer e.Shutdown()
 
-	if *daemon {
-		SetConsoleLevel(LevelInfo)
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
-		LogInfo("%s %s 已启动，节点 %d 个，配置目录 %s", AppName, AppVersion, len(cfg.Nodes), cfg.Dir())
-		<-ch
-		LogInfo("收到退出信号，正在停止...")
-		return
+	LogInfo("%s %s daemon 已启动，节点 %d 个，配置目录 %s", AppName, AppVersion, len(cfg.Nodes), cfg.Dir())
+
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	select {
+	case <-ch:
+		LogInfo("收到退出信号")
+	case <-srv.done:
+		LogInfo("控制通道关闭")
 	}
-
-	SetConsoleLevel(LevelWarn)
-	showMainMenu(e)
+	LogInfo("daemon 正在退出...")
 }
 
-func showMainMenu(e *Engine) {
+// runPanel 面板：只做客户端，退出不影响 daemon
+func runPanel(dir string) {
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	client, err := ensureDaemon(cfg.Dir())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+
+	SetConsoleLevel(LevelWarn)
+	showMainMenu(client)
+}
+
+func showMainMenu(e EngineAPI) {
 	for {
 		Clear()
 		nodes, conns, up, down := e.Totals()
@@ -100,7 +150,7 @@ func showMainMenu(e *Engine) {
 				return
 			}
 		case "0", "q", "":
-			LogInfo("再见")
+			LogInfo("再见（daemon 仍在后台运行）")
 			return
 		}
 	}
