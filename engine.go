@@ -249,26 +249,129 @@ func (e *Engine) allocPort(s Settings, excludeID string) (int, net.Listener, err
 
 // ---------- 增删改 ----------
 
-// Create 创建节点：分配端口 -> 落盘(提交点) -> 起监听 -> 起隧道
-func (e *Engine) Create(name, proto, mode, token, domain string) (Node, error) {
+// NodeSpec 新建节点的入参（Port/Path/UUID/Password 为空即自动生成）
+type NodeSpec struct {
+	Name     string
+	Protocol string
+	Mode     string
+	Token    string
+	Domain   string
+	Port     int
+	Path     string
+	UUID     string
+	Password string
+}
+
+// CheckPortFree 校验端口可用：既未被其他节点占用，也能真实绑定
+func (e *Engine) CheckPortFree(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("端口需为 1-65535")
+	}
+	for _, n := range e.Nodes() {
+		if n.Port == port {
+			return fmt.Errorf("端口 %d 已被节点 [%s] 占用", port, n.Name)
+		}
+	}
 	settings := e.Settings()
-	port, ln, err := e.allocPort(settings, "")
+	ln, err := net.Listen("tcp", net.JoinHostPort(settings.Listen, strconv.Itoa(port)))
 	if err != nil {
-		return Node{}, err
+		return fmt.Errorf("端口 %d 无法监听（可能被系统占用）", port)
+	}
+	ln.Close()
+	return nil
+}
+
+// FindByCredential 查找使用该凭据的节点名（用于重复告警）
+func (e *Engine) FindByCredential(cred string) string {
+	cred = strings.TrimSpace(cred)
+	if cred == "" {
+		return ""
+	}
+	for _, n := range e.Nodes() {
+		if n.Credential() == cred {
+			return n.Name
+		}
+	}
+	return ""
+}
+
+// Create 创建节点：校验 -> 分配端口 -> 落盘(提交点) -> 起监听 -> 起隧道
+func (e *Engine) Create(spec NodeSpec) (Node, error) {
+	settings := e.Settings()
+
+	name := strings.TrimSpace(spec.Name)
+	if name == "" {
+		return Node{}, errors.New("名称不能为空")
+	}
+	proto := strings.TrimSpace(spec.Protocol)
+	if proto != "vless" && proto != "trojan" {
+		return Node{}, fmt.Errorf("不支持的协议: %s", proto)
+	}
+	mode := strings.TrimSpace(spec.Mode)
+	if mode == "" {
+		mode = "temp"
+	}
+
+	path := strings.TrimSpace(spec.Path)
+	if path != "" {
+		if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, " \t") {
+			return Node{}, errors.New("WS 路径需以 / 开头且不含空白")
+		}
+	}
+	if path == "" {
+		path = randomPath()
+	}
+
+	// 凭据：先校验再绑定端口，避免占用资源
+	var uuid, password string
+	if proto == "trojan" {
+		password = strings.TrimSpace(spec.Password)
+		if password == "" {
+			password = randHex(16)
+		} else if len(password) < 8 || len(password) > 64 || strings.ContainsAny(password, " \t") {
+			return Node{}, errors.New("密码需为 8-64 位且不含空白")
+		}
+	} else {
+		uuid = strings.TrimSpace(spec.UUID)
+		if uuid == "" {
+			uuid = newUUID()
+		} else {
+			if _, err := parseUUID(uuid); err != nil {
+				return Node{}, fmt.Errorf("UUID 非法: %w", err)
+			}
+			uuid = normalizeUUID(uuid)
+		}
+	}
+
+	// 端口：手填则严格校验，留空则自动分配
+	var ln net.Listener
+	var port int
+	var err error
+	if spec.Port != 0 {
+		if err := e.CheckPortFree(spec.Port); err != nil {
+			return Node{}, err
+		}
+		port = spec.Port
+		ln, err = net.Listen("tcp", net.JoinHostPort(settings.Listen, strconv.Itoa(port)))
+		if err != nil {
+			return Node{}, fmt.Errorf("端口 %d 无法监听: %w", port, err)
+		}
+	} else {
+		port, ln, err = e.allocPort(settings, "")
+		if err != nil {
+			return Node{}, err
+		}
 	}
 
 	n := &Node{
 		Name:     name,
 		Protocol: proto,
 		Port:     port,
-		Path:     randomPath(),
-		Tunnel:   TunnelCfg{Mode: mode, Token: token, Domain: domain},
+		Path:     path,
+		UUID:     uuid,
+		Password: password,
+		Tunnel:   TunnelCfg{Mode: mode, Token: strings.TrimSpace(spec.Token), Domain: strings.TrimSpace(spec.Domain)},
 		Created:  time.Now().Format(time.RFC3339),
-	}
-	if proto == "trojan" {
-		n.Password = randHex(16)
-	} else {
-		n.UUID = newUUID()
 	}
 
 	e.mu.Lock()

@@ -38,7 +38,7 @@ func newTestEngine(t *testing.T) (*Engine, string) {
 func TestEngineCreateUpdateDelete(t *testing.T) {
 	e, dir := newTestEngine(t)
 
-	node, err := e.Create("测试节点", "vless", "temp", "", "")
+	node, err := e.Create(NodeSpec{Name: "测试节点", Protocol: "vless", Mode: "temp"})
 	if err != nil {
 		t.Fatalf("创建失败: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestPortConflictAutoShift(t *testing.T) {
 	}
 	defer blocker.Close()
 
-	node, err := e.Create("冲突测试", "vless", "temp", "", "")
+	node, err := e.Create(NodeSpec{Name: "冲突测试", Protocol: "vless", Mode: "temp"})
 	if err != nil {
 		t.Fatalf("创建失败: %v", err)
 	}
@@ -167,14 +167,14 @@ func TestPortRangeExhausted(t *testing.T) {
 	}
 	defer holder2.Close()
 
-	if _, err := e.Create("无端口", "vless", "temp", "", ""); err == nil {
+	if _, err := e.Create(NodeSpec{Name: "无端口", Protocol: "vless", Mode: "temp"}); err == nil {
 		t.Fatal("端口耗尽时应报错")
 	}
 }
 
 func TestTrojanCreateAndLink(t *testing.T) {
 	e, _ := newTestEngine(t)
-	node, err := e.Create("trojan节点", "trojan", "fixed", "eyJ0ZXN0IjoxfQ==", "argo.example.com")
+	node, err := e.Create(NodeSpec{Name: "trojan节点", Protocol: "trojan", Mode: "fixed", Token: "eyJ0ZXN0IjoxfQ==", Domain: "argo.example.com"})
 	if err != nil {
 		t.Fatalf("创建失败: %v", err)
 	}

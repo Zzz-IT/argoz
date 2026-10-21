@@ -13,20 +13,11 @@ import (
 
 func (c *Config) Dir() string { return filepath.Dir(c.path) }
 
-// isTerminal 判断是否为字符设备（TTY）
-func isTerminal(f *os.File) bool {
-	st, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return st.Mode()&os.ModeCharDevice != 0
-}
-
 func main() {
 	dir := flag.String("dir", "", "数据目录（默认 /usr/local/etc/argoz）")
 	daemon := flag.Bool("d", false, "无菜单守护模式")
 	showVer := flag.Bool("version", false, "显示版本")
-	classic := flag.Bool("classic", false, "使用经典菜单界面（不用全屏 TUI）")
+	flag.Bool("classic", false, "兼容旧参数（现在默认就是行式菜单）")
 	flag.Parse()
 
 	if *showVer {
@@ -72,39 +63,8 @@ func main() {
 		return
 	}
 
-	if *classic || !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
-		// 非交互环境（管道/重定向/无 TTY）自动降级为行式菜单，避免全屏界面卡死
-		SetConsoleLevel(LevelWarn)
-		showMainMenu(e)
-		return
-	}
-
-	// 全屏 TUI：日志只写文件，避免破坏画面
-	SetConsoleLevel(LevelOff)
-	plan, err := runTUI(e)
 	SetConsoleLevel(LevelWarn)
-	if plan != nil {
-		doUninstall(e, *plan)
-		return
-	}
-	if err != nil {
-		LogErr("TUI 启动失败: %v，回退到经典菜单", err)
-		showMainMenu(e)
-	}
-}
-
-// doUninstall 执行卸载并打印明细
-func doUninstall(e *Engine, plan uninstallPlan) {
-	fmt.Printf("\n  即将执行：%s\n\n", plan.Summary())
-	lines, err := e.Uninstall(plan)
-	for _, l := range lines {
-		fmt.Println("  · " + l)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [错误] 卸载未完成: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("\n  卸载完成，感谢使用 argoz。")
+	showMainMenu(e)
 }
 
 func showMainMenu(e *Engine) {

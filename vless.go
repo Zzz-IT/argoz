@@ -126,3 +126,12 @@ func vlessResponse(w io.Writer) error {
 	_, err := w.Write([]byte{0x00, 0x00})
 	return err
 }
+
+// normalizeUUID 统一成 8-4-4-4-12 的小写形式
+func normalizeUUID(s string) string {
+	b, err := parseUUID(s)
+	if err != nil {
+		return s
+	}
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}

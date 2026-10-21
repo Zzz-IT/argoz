@@ -35,7 +35,7 @@ func TestTunnelHardFailGoesHourly(t *testing.T) {
 	e, _ := newTestEngine(t)
 	stubFakeCloudflared(t)
 
-	node, err := e.Create("退避测试", "vless", "temp", "", "")
+	node, err := e.Create(NodeSpec{Name: "退避测试", Protocol: "vless", Mode: "temp"})
 	if err != nil {
 		t.Fatalf("创建失败: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestTunnelSoftFailFastRetry(t *testing.T) {
 	}
 	t.Cleanup(func() { cloudflaredLookup, commandContext = oldLookup, oldCmd })
 
-	node, err := e.Create("软错测试", "vless", "temp", "", "")
+	node, err := e.Create(NodeSpec{Name: "软错测试", Protocol: "vless", Mode: "temp"})
 	if err != nil {
 		t.Fatalf("创建失败: %v", err)
 	}

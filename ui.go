@@ -59,3 +59,9 @@ func Title(s string) {
 func HR() {
 	fmt.Printf("  %s──────────────────────────────────────────────────────────────%s\n", ColorGrey, ColorReset)
 }
+
+// ConfirmYes 回车即确认（默认 Y）
+func ConfirmYes(prompt string) bool {
+	s := ReadLine(prompt + " (Y/n): ")
+	return s == "" || strings.EqualFold(s, "y") || strings.EqualFold(s, "yes")
+}

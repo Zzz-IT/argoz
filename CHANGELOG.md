@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-22
+
+### 变更
+
+- **移除全屏 TUI**：删除 bubbletea / lipgloss 及全部间接依赖，界面回到纯文本行式菜单，**重新变成零第三方依赖**。
+- 二进制 8.47MB → 约 7.5MB；常驻内存减少 2~5MB；CI 不再需要下载依赖。
+- `--classic` 保留为兼容参数（现在默认就是行式菜单）。
+
+### 新增
+
+- 新建节点支持**手填端口 / WS 路径 / UUID（或密码）**，留空则自动生成，创建前有确认页。
+- 节点列表新增「状态 / 连接」列、错误信息与重试倒计时，按 `r` 刷新。
+- 详情页显示重启次数与下次重试时间。
+
+### 修复
+
+- 隧道错误提示改为优先提取真正的错误行，不再显示 usage 末尾的 `--help, -h`。
+
 ## [1.0.1] - 2026-10-22
 
 ### 修复
@@ -43,6 +61,7 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.0
 [1.0.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.0.0

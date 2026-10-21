@@ -61,9 +61,12 @@ func showNodeList(e *Engine) string {
 		}
 		HR()
 
-		choice := ReadLine("\n  输入编号进入详情 (0 返回): ")
+		choice := ReadLine("\n  输入编号进入详情   r 刷新   0 返回: ")
 		if choice == "0" || choice == "" {
 			return ""
+		}
+		if strings.EqualFold(choice, "r") {
+			continue
 		}
 		idx, err := strconv.Atoi(choice)
 		if err != nil || idx < 1 || idx > len(sts) {
@@ -375,10 +378,7 @@ func wizardCreate(e *Engine) {
 	Clear()
 	Title("新建节点")
 
-	settings := e.Settings()
-	nodes := e.Nodes()
-	defaultName := fmt.Sprintf("Argo-VLESS-%d", len(nodes)+1)
-
+	defaultName := fmt.Sprintf("Argo-VLESS-%d", len(e.Nodes())+1)
 	name := ReadLine(fmt.Sprintf("\n  名称 (默认 %s): ", defaultName))
 	if name == "" {
 		name = defaultName
@@ -389,6 +389,10 @@ func wizardCreate(e *Engine) {
 	if ReadLine("  请选择 (默认 1): ") == "2" {
 		proto = "trojan"
 	}
+
+	port := promptPort(e)
+	path := promptPath()
+	cred := promptCredential(e, proto)
 
 	fmt.Println("\n  Argo 隧道   [1] 临时 (CF 自动分配域名)    [2] 固定 (Token + 自有域名)")
 	mode := "temp"
@@ -403,12 +407,53 @@ func wizardCreate(e *Engine) {
 			Pause("")
 			return
 		}
-		LogWarn("请确认 CF 面板中该隧道的路由指向 http://localhost:<自动分配的端口>")
-		_ = settings
+	}
+
+	fmt.Printf("\n  %s── 即将创建 ──────────────────────────────────────%s\n", ColorCyan, ColorReset)
+	fmt.Printf("  名称    %s\n", name)
+	fmt.Printf("  协议    %s\n", proto)
+	if port == 0 {
+		fmt.Printf("  端口    自动分配\n")
+	} else {
+		fmt.Printf("  端口    %d\n", port)
+	}
+	if path == "" {
+		fmt.Printf("  路径    随机生成\n")
+	} else {
+		fmt.Printf("  路径    %s\n", path)
+	}
+	switch {
+	case cred == "":
+		fmt.Printf("  凭据    自动生成\n")
+	case proto == "vless":
+		fmt.Printf("  UUID    %s\n", cred)
+	default:
+		fmt.Printf("  密码    %s\n", cred)
+	}
+	if mode == "temp" {
+		fmt.Printf("  隧道    临时\n")
+	} else {
+		fmt.Printf("  隧道    固定 · %s\n", domain)
+	}
+
+	if !ConfirmYes("\n  确认创建?") {
+		LogWarn("已取消创建")
+		Pause("")
+		return
+	}
+
+	spec := NodeSpec{
+		Name: name, Protocol: proto, Mode: mode, Token: token, Domain: domain,
+		Port: port, Path: path,
+	}
+	if proto == "vless" {
+		spec.UUID = cred
+	} else {
+		spec.Password = cred
 	}
 
 	fmt.Println()
-	node, err := e.Create(name, proto, mode, token, domain)
+	node, err := e.Create(spec)
 	if err != nil {
 		LogErr("创建失败: %v", err)
 		Pause("")
@@ -429,6 +474,83 @@ func wizardCreate(e *Engine) {
 
 	Pause("按回车查看节点详情...")
 	showNodeDetail(e, node.ID)
+}
+
+// promptPort 询问端口；回车 = 自动分配
+func promptPort(e *Engine) int {
+	for {
+		raw := ReadLine("  端口 (回车自动分配): ")
+		if raw == "" {
+			return 0
+		}
+		p, err := strconv.Atoi(raw)
+		if err != nil || p < 1 || p > 65535 {
+			LogErr("端口需为 1-65535，请重新输入")
+			continue
+		}
+		if err := e.CheckPortFree(p); err != nil {
+			LogErr("%v", err)
+			continue
+		}
+		return p
+	}
+}
+
+// promptPath 询问 WS 路径；回车 = 随机生成
+func promptPath() string {
+	for {
+		raw := ReadLine("  WS 路径 (回车随机生成): ")
+		if raw == "" {
+			return ""
+		}
+		if !strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, " \t") {
+			LogErr("路径需以 / 开头且不含空白")
+			continue
+		}
+		return raw
+	}
+}
+
+// promptCredential 询问 UUID / 密码；回车 = 自动生成
+func promptCredential(e *Engine, proto string) string {
+	if proto == "trojan" {
+		for {
+			raw := ReadLine("  密码 (回车随机生成，8-64 位): ")
+			if raw == "" {
+				return ""
+			}
+			if len(raw) < 8 || len(raw) > 64 || strings.ContainsAny(raw, " \t") {
+				LogErr("密码需为 8-64 位且不含空白")
+				continue
+			}
+			if dup := e.FindByCredential(raw); dup != "" {
+				LogWarn("该密码与节点 [%s] 重复", dup)
+				if !Confirm("  确认继续?") {
+					continue
+				}
+			}
+			return raw
+		}
+	}
+
+	for {
+		raw := ReadLine("  UUID (回车自动生成): ")
+		if raw == "" {
+			return ""
+		}
+		if _, err := parseUUID(raw); err != nil {
+			LogErr("UUID 格式非法，请重新输入")
+			continue
+		}
+		norm := normalizeUUID(raw)
+		if dup := e.FindByCredential(norm); dup != "" {
+			LogWarn("该 UUID 与节点 [%s] 重复", dup)
+			if !Confirm("  确认继续?") {
+				continue
+			}
+		}
+		return norm
+	}
 }
 
 // extractToken 从整条 cloudflared 命令中提取 Token
