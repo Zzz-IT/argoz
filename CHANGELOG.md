@@ -2,6 +2,13 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [1.3.1] - 2026-10-22
+
+### 修复
+
+- **升级后残留旧 daemon**：`argoz service install` 由 `start` 改为 `restart`（systemd / OpenRC 同步）。此前服务已在运行时 `start` 是空操作，新面板会连到旧版本 daemon，检查更新报 `未知命令: updateCheck`。
+- **版本一致性提示**：面板启动时读取 daemon 版本，与自身不一致时在主菜单红字提示并给出重启命令。
+
 ## [1.3.0] - 2026-10-22
 
 ### 新增
@@ -131,7 +138,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.1
 [1.3.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.2.0
 [1.1.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.2

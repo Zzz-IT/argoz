@@ -14,11 +14,12 @@ import (
 
 // rpcClient 面板侧客户端：所有操作都转发给常驻 daemon
 type rpcClient struct {
-	mu   sync.Mutex
-	conn net.Conn
-	enc  *json.Encoder
-	dec  *json.Decoder
-	dir  string
+	mu            sync.Mutex
+	conn          net.Conn
+	enc           *json.Encoder
+	dec           *json.Decoder
+	dir           string
+	daemonVersion string
 }
 
 func dialRPC(dir string) (*rpcClient, error) {
@@ -26,12 +27,17 @@ func dialRPC(dir string) (*rpcClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &rpcClient{
+	c := &rpcClient{
 		conn: conn,
 		enc:  json.NewEncoder(conn),
 		dec:  json.NewDecoder(bufio.NewReader(conn)),
 		dir:  dir,
-	}, nil
+	}
+	var info core.DaemonInfo
+	if err := c.call("info", nil, &info); err == nil {
+		c.daemonVersion = info.Version
+	}
+	return c, nil
 }
 
 func (c *rpcClient) Close() {
@@ -255,3 +261,6 @@ func (c *rpcClient) UpdateApply() (updateResult, error) {
 	}
 	return res, nil
 }
+
+// DaemonVersion 返回 daemon 报告的版本（老版本 daemon 可能为空）
+func (c *rpcClient) DaemonVersion() string { return c.daemonVersion }

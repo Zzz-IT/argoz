@@ -50,6 +50,7 @@ type API interface {
 	FindByCredential(cred string) string
 	Uninstall(plan core.UninstallPlan) ([]string, error)
 	DataDir() string
+	DaemonVersion() string
 	Info() daemonInfo
 	UpdateCheck() (updateInfo, error)
 	UpdateApply() (updateResult, error)

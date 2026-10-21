@@ -120,7 +120,7 @@ func ServiceInstall(opts ServiceOptions) error {
 			return err
 		}
 		if !opts.NoStart {
-			if err := RunServiceCommand("systemctl", "start", "argoz"); err != nil {
+			if err := RunServiceCommand("systemctl", "restart", "argoz"); err != nil {
 				return err
 			}
 		}
@@ -137,7 +137,7 @@ func ServiceInstall(opts ServiceOptions) error {
 			return err
 		}
 		if !opts.NoStart {
-			if err := RunServiceCommand("rc-service", "argoz", "start"); err != nil {
+			if err := RunServiceCommand("rc-service", "argoz", "restart"); err != nil {
 				return err
 			}
 		}

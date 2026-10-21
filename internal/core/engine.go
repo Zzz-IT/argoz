@@ -1,6 +1,7 @@
 package core
 
 import (
+	"argoz/internal/config"
 	"context"
 	"errors"
 	"fmt"
@@ -571,3 +572,6 @@ func (e *Engine) persistLastError(id, msg string) {
 
 // DataDir 返回数据目录
 func (e *Engine) DataDir() string { return e.dataDir }
+
+// DaemonVersion 返回当前引擎版本
+func (e *Engine) DaemonVersion() string { return config.Version }

@@ -47,6 +47,10 @@ func Run(e rpc.API) {
 		if s, _ := hint.Load().(string); s != "" {
 			fmt.Printf("  %s%s%s\n", ColorYellow, s, ColorReset)
 		}
+		if dv := e.DaemonVersion(); dv != "" && dv != config.Version {
+			fmt.Printf("  %s⚠ 守护进程仍是 %s，与面板 %s 不一致，请执行：argoz service install（或 rc-service argoz restart）%s\n",
+				ColorYellow, dv, config.Version, ColorReset)
+		}
 
 		fmt.Printf("\n  1 节点管理    2 新建节点    3 设置    4 日志    5 检查更新    6 运行状态    9 卸载    0 退出\n\n")
 
