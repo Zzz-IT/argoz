@@ -156,7 +156,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o argoz .
 ## 开发
 
 ```bash
-go test ./... -race     # 35 个用例：协议端到端、退避时序、探针、日志、TUI、卸载
+go test ./... -race     # 57 个用例：协议端到端、退避时序、探针、日志、TUI、卸载
 go vet ./...
 ```
 

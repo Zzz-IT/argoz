@@ -21,16 +21,6 @@ const (
 
 type tickMsg time.Time
 
-const (
-	wSel   = 2
-	wNum   = 3
-	wName  = 17
-	wProto = 7
-	wPort  = 6
-	wState = 9
-	wConn  = 5
-)
-
 type tuiModel struct {
 	eng  *Engine
 	snap Snapshot
@@ -153,6 +143,8 @@ func (m *tuiModel) updateList(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.logs = &logModel{}
 		m.logs.reload(m.eng)
 		m.page = pgLogs
+	case "u":
+		m.openUninstall()
 	case "r":
 		if n, ok := m.current(); ok {
 			if err := m.eng.RestartTunnel(n.Node.ID); err != nil {
@@ -162,8 +154,6 @@ func (m *tuiModel) updateList(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.refresh()
 		}
-	case "u":
-		m.openUninstall()
 	case "d":
 		if n, ok := m.current(); ok {
 			id, name := n.Node.ID, n.Node.Name
@@ -218,17 +208,71 @@ func (m *tuiModel) updateLogs(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// ---------- 布局计算 ----------
+
+// listCols 列表列宽；窗口越窄，可选列越少
+type listCols struct {
+	nameW      int
+	domainW    int
+	showProto  bool
+	showPort   bool
+	showDomain bool
+}
+
+func computeListCols(innerW int) listCols {
+	c := listCols{nameW: 16}
+	c.showProto = innerW >= 64
+	c.showPort = innerW >= 52
+	c.showDomain = innerW >= 76
+
+	// sel(2) + num(3) + name + state(8) + conn(5) + 4 个分隔空格
+	used := 22 + c.nameW
+	if c.showProto {
+		used += 8
+	}
+	if c.showPort {
+		used += 7
+	}
+	if c.showDomain {
+		c.domainW = innerW - used - 1
+		if c.domainW < 12 {
+			c.showDomain = false
+		}
+	}
+	if !c.showDomain {
+		if extra := innerW - used; extra > 0 {
+			c.nameW += extra
+		}
+	}
+	return c
+}
+
+func (c listCols) header() string {
+	parts := []string{spaces(2), padFit("#", 3), padFit("名称", c.nameW)}
+	if c.showProto {
+		parts = append(parts, padFit("协议", 7))
+	}
+	if c.showPort {
+		parts = append(parts, padLeftFit("端口", 6))
+	}
+	if c.showDomain {
+		parts = append(parts, padFit("域名", c.domainW))
+	}
+	parts = append(parts, padFit("状态", 8), padLeftFit("连接", 5))
+	return strings.Join(parts, " ")
+}
+
 // ---------- 视图 ----------
 
 func (m *tuiModel) View() string {
-	w := max(60, m.width)
+	w := max(40, m.width)
 
 	header := m.viewHeader(w)
 	footer := m.viewFooter(w)
 
 	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 1
-	if bodyH < 8 {
-		bodyH = 8
+	if bodyH < 6 {
+		bodyH = 6
 	}
 
 	var body string
@@ -246,11 +290,13 @@ func (m *tuiModel) View() string {
 	out := header + "\n" + body + "\n" + footer
 
 	if m.confirm != "" {
-		out += "\n" + stErr.Render("  "+m.confirm+"   [y/N]")
+		out += "\n" + stErr.Render(fit("  "+m.confirm+"   [y/N]", w))
 	} else if m.toast != "" && time.Since(m.toastAt) < 4*time.Second {
-		out += "\n" + stWarn.Render("  "+m.toast)
+		out += "\n" + stWarn.Render(fit("  "+m.toast, w))
 	}
-	return out
+
+	// 兜底：任何一行超宽都会被终端折行，这里强制裁剪
+	return lipgloss.NewStyle().MaxWidth(w).Render(out)
 }
 
 func (m *tuiModel) viewHeader(w int) string {
@@ -260,60 +306,64 @@ func (m *tuiModel) viewHeader(w int) string {
 			up++
 		}
 	}
-	left := stTitle.Render("argoz " + m.snap.Version)
-	right := fmt.Sprintf("%s   节点 %d · 运行 %d   连接 %d   ↑%s ↓%s   %s",
+
+	inner := w - 4
+	segs := []string{
+		stTitle.Render("argoz " + m.snap.Version),
 		stOK.Render("● running"),
-		len(m.snap.Nodes), up, m.snap.Conns,
-		humanBytes(m.snap.Up), humanBytes(m.snap.Down),
-		stMuted.Render("up "+humanDuration(time.Since(m.snap.Started))),
-	)
-	gap := w - 4 - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
+		stMuted.Render(fmt.Sprintf("节点 %d · 运行 %d", len(m.snap.Nodes), up)),
+		stMuted.Render(fmt.Sprintf("连接 %d", m.snap.Conns)),
+		stMuted.Render(fmt.Sprintf("↑%s ↓%s", humanBytes(m.snap.Up), humanBytes(m.snap.Down))),
+		stMuted.Render("up " + humanDuration(time.Since(m.snap.Started))),
 	}
-	return stBox.Width(w - 2).Render(left + spaces(gap) + right)
+
+	line := segs[0]
+	for _, s := range segs[1:] {
+		next := line + "   " + s
+		if lipgloss.Width(next) > inner {
+			break
+		}
+		line = next
+	}
+	return stBox.Width(w - 2).Render(line)
 }
 
 func (m *tuiModel) viewFooter(w int) string {
-	var bar string
+	type kv [2]string
+	var items []kv
+
 	switch m.page {
 	case pgDetail:
-		bar = keyBar(
-			[2]string{"c", "复制链接"}, [2]string{"y", "复制 YAML"}, [2]string{"w", "写入文件"},
-			[2]string{"e", "编辑"}, [2]string{"r", "重启隧道"}, [2]string{"d", "删除"},
-			[2]string{"esc", "返回"},
-		)
+		items = []kv{{"esc", "返回"}, {"c", "复制链接"}, {"y", "复制 YAML"}, {"w", "写入文件"}, {"e", "编辑"}, {"r", "重启"}, {"d", "删除"}, {"q", "退出"}}
 	case pgForm:
-		bar = keyBar(
-			[2]string{"↑↓", "切换"}, [2]string{"←→", "选择"},
-			[2]string{"enter", "编辑/确认"}, [2]string{"ctrl+s", "保存"}, [2]string{"esc", "取消"},
-		)
+		items = []kv{{"esc", "取消"}, {"↑↓", "切换"}, {"←→", "选择"}, {"enter", "编辑/确认"}, {"ctrl+s", "保存"}}
 	case pgLogs:
-		bar = keyBar([2]string{"j/k", "滚动"}, [2]string{"esc", "返回"})
+		items = []kv{{"esc", "返回"}, {"j/k", "滚动"}}
 	default:
-		bar = keyBar(
-			[2]string{"j/k", "选择"}, [2]string{"enter", "详情"}, [2]string{"n", "新建"},
-			[2]string{"r", "重启隧道"}, [2]string{"d", "删除"}, [2]string{"s", "设置"},
-			[2]string{"l", "日志"}, [2]string{"u", "卸载"}, [2]string{"q", "退出"},
-		)
+		items = []kv{{"q", "退出"}, {"j/k", "选择"}, {"enter", "详情"}, {"n", "新建"}, {"r", "重启"}, {"d", "删除"}, {"s", "设置"}, {"l", "日志"}, {"u", "卸载"}}
 	}
-	return " " + bar
-}
 
-func domainWidth(innerW int) int {
-	return max(10, innerW-(wSel+wNum+wName+wProto+wPort+wState+wConn)-7)
+	line := ""
+	for _, it := range items {
+		seg := stKey.Render(it[0]) + " " + stMuted.Render(it[1])
+		cand := seg
+		if line != "" {
+			cand = line + "   " + seg
+		}
+		if lipgloss.Width(cand) > w-2 {
+			break
+		}
+		line = cand
+	}
+	return " " + line
 }
 
 func (m *tuiModel) viewList(w, h int) string {
 	innerW := w - 4
-	dw := domainWidth(innerW)
+	cols := computeListCols(innerW)
 
 	var b strings.Builder
-	b.WriteString(stMuted.Render(
-		spaces(wSel) + padFit("#", wNum) + " " +
-			padFit("名称", wName) + " " + padFit("协议", wProto) + " " +
-			padLeftFit("端口", wPort) + " " + padFit("域名", dw) + " " +
-			padFit("状态", wState) + " " + padLeftFit("连接", wConn)))
+	b.WriteString(stMuted.Render(cols.header()))
 	b.WriteString("\n")
 
 	rows := h - 4
@@ -330,7 +380,7 @@ func (m *tuiModel) viewList(w, h int) string {
 		b.WriteString("\n" + stMuted.Render("  还没有节点，按 n 新建一个。") + "\n")
 	} else {
 		for i := start; i < end; i++ {
-			b.WriteString(m.row(m.snap.Nodes[i], i, dw, innerW))
+			b.WriteString(m.row(m.snap.Nodes[i], i, cols, innerW))
 			b.WriteString("\n")
 		}
 	}
@@ -338,7 +388,7 @@ func (m *tuiModel) viewList(w, h int) string {
 	if n, ok := m.current(); ok {
 		extra := ""
 		if n.Err != "" {
-			extra = truncate(n.Err, innerW-30)
+			extra = n.Err
 		}
 		if !n.NextRetry.IsZero() {
 			if d := time.Until(n.NextRetry); d > 0 {
@@ -346,37 +396,48 @@ func (m *tuiModel) viewList(w, h int) string {
 			}
 		}
 		if extra != "" {
-			b.WriteString(stWarn.Render("  " + extra))
+			b.WriteString(stWarn.Render(fit("  "+extra, innerW)))
 		}
 	}
 
 	return stPanel.Width(w - 2).Render(strings.TrimRight(b.String(), "\n"))
 }
 
-func (m *tuiModel) row(n NodeStatus, i int, dw, innerW int) string {
+func (m *tuiModel) row(n NodeStatus, i int, c listCols, innerW int) string {
 	selected := i == m.cursor
 	sel := "  "
 	if selected {
 		sel = "▌ "
 	}
-	num := padLeftFit(strconv.Itoa(i+1), wNum)
-	name := padFit(n.Node.Name, wName)
-	proto := padFit(n.Node.Protocol, wProto)
-	port := padLeftFit(strconv.Itoa(n.Node.Port), wPort)
-	domain := n.Node.Tunnel.Domain
-	if domain == "" {
-		domain = "(未分配)"
+
+	parts := []string{
+		sel,
+		padLeftFit(strconv.Itoa(i+1), 3),
+		padFit(n.Node.Name, c.nameW),
 	}
-	domain = padFit(domain, dw)
-	state := padFit(stateText(n.State), wState)
-	conns := padLeftFit(strconv.Itoa(int(n.Conns)), wConn)
+	if c.showProto {
+		parts = append(parts, padFit(n.Node.Protocol, 7))
+	}
+	if c.showPort {
+		parts = append(parts, padLeftFit(strconv.Itoa(n.Node.Port), 6))
+	}
+	if c.showDomain {
+		d := n.Node.Tunnel.Domain
+		if d == "" {
+			d = "(未分配)"
+		}
+		parts = append(parts, padFit(d, c.domainW))
+	}
+
+	head := strings.Join(parts, " ")
+	state := stateText(n.State)
+	conns := padLeftFit(strconv.Itoa(int(n.Conns)), 5)
 
 	if selected {
-		plain := sel + num + " " + name + " " + proto + " " + port + " " + domain + " " + state + " " + conns
+		plain := head + " " + padFit(state, 8) + " " + conns
 		return stSel.Render(padFit(plain, innerW))
 	}
-	return sel + num + " " + name + " " + proto + " " + port + " " + domain + " " +
-		stateStyled(n.State) + spaces(wState-lipgloss.Width(stateText(n.State))) + " " + conns
+	return head + " " + stateStyled(n.State) + spaces(8-lipgloss.Width(state)) + " " + conns
 }
 
 // runTUI 启动全屏界面（8 FPS，降低 CPU 抖动）

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-22
+
+### 修复
+
+- **cloudflared 启动参数顺序错误**：`--no-autoupdate` 是全局 flag，必须位于子命令之前。此前写成 `tunnel --no-autoupdate ...`，cloudflared 会以 `flag provided but not defined` 退出，导致**所有隧道都无法建立**、节点长期停留在降级状态。
+- **隧道错误提示不可读**：以前取 cloudflared 输出的最后一行，常显示 usage 末尾的 `--help, -h`；现在优先提取真正的错误行（Incorrect Usage / failed / error 等）。
+- **TUI 窄窗口错位**：面板宽度少算了边框与内边距，右侧被截断、表格与快捷键条折行。现在按终端宽度自适应：依次收起「域名 → 协议 → 端口」列，页头与页脚按剩余宽度裁剪。
+- **节点信息行跑出面板**：错误/重试提示现按面板宽度截断。
+
 ## [1.0.0] - 2026-10-22
 
 首个正式版本：把 Argo（Cloudflare Tunnel）与 WebSocket 代理节点合成一个单二进制工具。
@@ -34,5 +43,6 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.0.0

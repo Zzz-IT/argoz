@@ -214,15 +214,11 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 		return err
 	}
 
-	var args []string
-	if node.Tunnel.Mode == "fixed" {
-		if strings.TrimSpace(node.Tunnel.Token) == "" {
-			return errors.New("固定隧道缺少 Token")
-		}
-		args = []string{"tunnel", "run", "--no-autoupdate", "--token", node.Tunnel.Token}
-	} else {
-		args = []string{"tunnel", "--no-autoupdate", "--url", fmt.Sprintf("http://127.0.0.1:%d", node.Port)}
+	args, err := tunnelArgs(node)
+	if err != nil {
+		return err
 	}
+	LogDebug("执行: %s %s", bin, strings.Join(args, " "))
 
 	cmd := commandContext(ctx, bin, args...)
 	pr, pw := io.Pipe()
@@ -260,13 +256,16 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	sc := bufio.NewScanner(pr)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 
-	last := ""
+	var tail []string
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
 			continue
 		}
-		last = line
+		tail = append(tail, line)
+		if len(tail) > 40 {
+			tail = tail[1:]
+		}
 
 		if node.Tunnel.Mode == "temp" {
 			if m := domainRe.FindString(line); m != "" {
@@ -284,16 +283,48 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	}
 
 	waitErr := <-waitCh
-	if waitErr != nil {
-		if last != "" {
-			return errors.New(last)
+	if msg := summariseCloudflared(tail); msg != "" {
+		if waitErr != nil {
+			return fmt.Errorf("%s", msg)
 		}
+		return fmt.Errorf("%s", msg)
+	}
+	if waitErr != nil {
 		return fmt.Errorf("cloudflared 退出: %w", waitErr)
 	}
-	if last != "" {
-		return errors.New(last)
-	}
 	return nil
+}
+
+// tunnelArgs 构造 cloudflared 参数。
+// 注意：--no-autoupdate 是全局 flag，必须放在子命令之前，
+// 否则 cloudflared 会报 "flag provided but not defined" 并打印 usage。
+func tunnelArgs(n Node) ([]string, error) {
+	if n.Tunnel.Mode == "fixed" {
+		token := strings.TrimSpace(n.Tunnel.Token)
+		if token == "" {
+			return nil, errors.New("固定隧道缺少 Token")
+		}
+		return []string{"--no-autoupdate", "tunnel", "run", "--token", token}, nil
+	}
+	return []string{"--no-autoupdate", "tunnel", "--url", fmt.Sprintf("http://127.0.0.1:%d", n.Port)}, nil
+}
+
+// summariseCloudflared 从输出尾部挑一行最有诊断价值的错误
+func summariseCloudflared(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	keys := []string{"incorrect usage", "flag provided but not defined", "unknown flag", "failed", "error", "err=", "cannot", "no such"}
+	for _, l := range lines {
+		low := strings.ToLower(l)
+		for _, k := range keys {
+			if strings.Contains(low, k) {
+				return strings.TrimSpace(l)
+			}
+		}
+	}
+	// 退化为第一条非空行（cloudflared 的首行通常带版本与运行模式）
+	return strings.TrimSpace(lines[0])
 }
 
 // cloudflaredLookup / commandContext 可被测试替换

@@ -110,3 +110,69 @@ func TestFakeCloudflaredHelperSoft(t *testing.T) {
 	fmt.Fprintln(os.Stderr, "connection reset by peer")
 	os.Exit(1)
 }
+
+func TestTunnelArgsOrder(t *testing.T) {
+	// 临时隧道：全局 flag 必须在子命令之前
+	n := Node{Port: 20001, Tunnel: TunnelCfg{Mode: "temp"}}
+	args, err := tunnelArgs(n)
+	if err != nil {
+		t.Fatalf("构造参数失败: %v", err)
+	}
+	want := []string{"--no-autoupdate", "tunnel", "--url", "http://127.0.0.1:20001"}
+	if len(args) != len(want) {
+		t.Fatalf("参数数量不符: %v", args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("第 %d 个参数应为 %q，实际 %q（完整: %v）", i, want[i], args[i], args)
+		}
+	}
+	if args[0] != "--no-autoupdate" {
+		t.Fatal("--no-autoupdate 必须在子命令之前，否则 cloudflared 会报 flag provided but not defined")
+	}
+
+	// 固定隧道
+	f := Node{Tunnel: TunnelCfg{Mode: "fixed", Token: "eyJhIjoiY2YifQ=="}}
+	args2, err := tunnelArgs(f)
+	if err != nil {
+		t.Fatalf("构造参数失败: %v", err)
+	}
+	want2 := []string{"--no-autoupdate", "tunnel", "run", "--token", "eyJhIjoiY2YifQ=="}
+	for i := range want2 {
+		if args2[i] != want2[i] {
+			t.Fatalf("固定隧道参数错误: %v", args2)
+		}
+	}
+
+	// 缺 Token
+	if _, err := tunnelArgs(Node{Tunnel: TunnelCfg{Mode: "fixed"}}); err == nil {
+		t.Fatal("固定隧道缺少 Token 应报错")
+	}
+}
+
+func TestSummariseCloudflared(t *testing.T) {
+	// 模拟 cloudflared 因参数顺序错误打印的 usage 块
+	lines := []string{
+		"Incorrect Usage: flag provided but not defined: -no-autoupdate",
+		"",
+		"NAME:",
+		"   cloudflared tunnel - Create and manage Cloudflare Tunnels",
+		"USAGE:",
+		"   cloudflared tunnel [command options] [arguments...]",
+		"OPTIONS:",
+		"   --help, -h  show help",
+	}
+	got := summariseCloudflared(lines)
+	if !contains(got, "Incorrect Usage") {
+		t.Fatalf("应优先返回真正的错误行，实际: %q", got)
+	}
+	if contains(got, "--help") {
+		t.Fatalf("不应把 usage 末尾当成错误: %q", got)
+	}
+
+	// 无明确错误时退化为首行
+	got2 := summariseCloudflared([]string{"2026-10-22 INF Starting tunnel", "2026-10-22 INF Version 2026.2.0"})
+	if !contains(got2, "Starting tunnel") {
+		t.Fatalf("应退化为首行，实际: %q", got2)
+	}
+}
