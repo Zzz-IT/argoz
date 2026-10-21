@@ -220,9 +220,9 @@ func TestWSMaxConns(t *testing.T) {
 }
 
 func TestWSHandshakeTimeout(t *testing.T) {
-	old := wsHandshakeTimeout
-	wsHandshakeTimeout = 100 * time.Millisecond
-	defer func() { wsHandshakeTimeout = old }()
+	old := getWSHandshakeTimeout()
+	setWSHandshakeTimeout(100 * time.Millisecond)
+	defer setWSHandshakeTimeout(old)
 
 	uuid := newUUID()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

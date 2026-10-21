@@ -12,9 +12,16 @@ import (
 	"time"
 )
 
-// wsHandshakeTimeout 是 WS 升级后到协议握手完成的读超时。
-// 单独用变量是为了测试可以缩短；生产默认 10s。
-var wsHandshakeTimeout = 10 * time.Second
+// wsHandshakeTimeoutNanos 是 WS 升级后到协议握手完成的读超时（纳秒，原子读写）
+var wsHandshakeTimeoutNanos atomic.Int64
+
+func init() { wsHandshakeTimeoutNanos.Store(int64(10 * time.Second)) }
+
+// setWSHandshakeTimeout 设置握手超时（测试可调）
+func setWSHandshakeTimeout(d time.Duration) { wsHandshakeTimeoutNanos.Store(int64(d)) }
+
+// getWSHandshakeTimeout 读取握手超时
+func getWSHandshakeTimeout() time.Duration { return time.Duration(wsHandshakeTimeoutNanos.Load()) }
 
 // nodeRuntime 单个节点的运行态
 type nodeRuntime struct {
@@ -155,7 +162,7 @@ func (rt *nodeRuntime) serve(ws *wsConn, node Node, settings Settings) {
 	defer rt.conns.Add(-1)
 
 	// 升级完成后的协议握手必须有超时，防止只完成 101 不发送数据的连接占满 MaxConns。
-	_ = ws.SetReadDeadline(time.Now().Add(wsHandshakeTimeout))
+	_ = ws.SetReadDeadline(time.Now().Add(getWSHandshakeTimeout()))
 
 	stage := "handshake"
 	var target string

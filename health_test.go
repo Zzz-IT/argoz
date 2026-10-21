@@ -158,7 +158,7 @@ func TestRetryHint(t *testing.T) {
 	if got := retryHint(NodeStatus{}); got != "" {
 		t.Fatalf("无重试计划时应为空，实际 %q", got)
 	}
-	st := NodeStatus{NextRetry: time.Now().Add(3 * time.Minute)}
+	st := NodeStatus{NextRetry: time.Now().Add(3*time.Minute + 30*time.Second)}
 	got := retryHint(st)
 	if !contains(got, "后重试") || !contains(got, "3m") {
 		t.Fatalf("重试提示异常: %q", got)
