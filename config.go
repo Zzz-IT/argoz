@@ -18,7 +18,7 @@ const (
 )
 
 // AppVersion 发布时由 CI 通过 -ldflags "-X main.AppVersion=v1.0.0" 注入
-var AppVersion = "v1.1.1"
+var AppVersion = "v1.1.2"
 
 // TunnelCfg Argo 隧道配置
 type TunnelCfg struct {
@@ -80,12 +80,12 @@ func (s Settings) IdleDur() time.Duration {
 func (s Settings) PortBounds() (int, int, error) {
 	parts := strings.Split(strings.TrimSpace(s.PortRange), "-")
 	if len(parts) != 2 {
-		return 0, 0, errors.New("端口段格式应为 20000-20100")
+		return 0, 0, errors.New("端口段格式应为 起始-结束（如 1-65535，单个端口写 8080-8080）")
 	}
 	lo, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
 	hi, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err1 != nil || err2 != nil || lo < 1 || hi > 65535 || lo >= hi {
-		return 0, 0, errors.New("端口段不合法（1-65535 且起始小于结束）")
+	if err1 != nil || err2 != nil || lo < 1 || hi > 65535 || lo > hi {
+		return 0, 0, errors.New("端口段不合法（需在 1-65535 内，起始不得大于结束）")
 	}
 	return lo, hi, nil
 }

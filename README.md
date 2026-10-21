@@ -83,6 +83,16 @@ bash <(wget -qO- https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh)
       提示：1033/530 多为 CF 面板路由未指向 http://localhost:20002
 ```
 
+## 单实例保护
+
+启动时在数据目录写 `argoz.lock`（内含 pid）。已有实例在跑时，第二个进程会直接退出：
+
+```
+已有 argoz 实例在运行（pid 163），请先停止它：kill 163
+```
+
+进程被 kill -9 留下的陈旧锁，会在下次启动时按 pid 存活状态自动接管，不会卡住。
+
 ## 特性
 
 - **纯文本菜单**：零第三方依赖，只有标准库
@@ -160,7 +170,7 @@ bash install.sh --uninstall --purge  # 连配置、日志、cloudflared 一起�
 | 并发上限 | 128 | 每节点活跃 WS 会话数，超出 503（每会话约 41KB） |
 | 保活间隔 | 30s | WS ping 周期 |
 | 空闲超时 | 5m | 双向无流量强制下线 |
-| 监听与端口段 | 127.0.0.1 / 1-65535 | 自动分配时的候选范围（从 1024 起） |
+| 监听与端口段 | 127.0.0.1 / 1-65535 | 自动分配范围（从 1024 起）；可写单端口如 `8080-8080` |
 | ECH 注入 | 开 | 链接/YAML 的 SNI 写成 cloudflare-ech.com |
 | 日志级别 | info | error / warn / info / debug |
 

@@ -279,7 +279,7 @@ func (e *Engine) CheckPortFree(port int, excludeID string) error {
 	settings := e.Settings()
 	ln, err := net.Listen("tcp", net.JoinHostPort(settings.Listen, strconv.Itoa(port)))
 	if err != nil {
-		return fmt.Errorf("端口 %d 无法监听（可能被系统占用）", port)
+		return fmt.Errorf("端口 %d 被系统内其他程序占用（可用 ss -lntp | grep :%d 查看）", port, port)
 	}
 	ln.Close()
 	return nil

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-22
+
+### 修复
+
+- **多实例互相抢端口**：新增单实例锁 `<数据目录>/argoz.lock`。已有实例在运行时，第二个 `argoz` 会直接退出并提示 `已有 argoz 实例在运行（pid X）`；进程崩溃留下的陈旧锁会自动接管。
+  此前反复手动启动会堆出多个进程，它们互相抢占端口并把"顺延后的端口"写回配置，导致端口自己乱跳、8080 永远改不动。
+- **端口段允许写单个端口**：`8080-8080` 现在合法（此前要求起始必须小于结束）。
+- **端口占用提示更明确**：附带排查命令 `ss -lntp | grep :PORT`。
+
 ## [1.1.1] - 2026-10-22
 
 ### 修复
@@ -74,7 +83,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.2
 [1.1.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.1.0
 [1.0.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.0.1
