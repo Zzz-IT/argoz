@@ -112,3 +112,32 @@ func newTestEngine(t *testing.T) (*core.Engine, string) {
 	t.Cleanup(func() { e.Shutdown() })
 	return e, dir
 }
+
+func TestHelloHandshake(t *testing.T) {
+	e, dir := newTestEngine(t)
+	srv, err := Start(e, dir)
+	if err != nil {
+		t.Fatalf("启动 RPC 服务失败: %v", err)
+	}
+	defer srv.Shutdown()
+
+	var c *rpcClient
+	for i := 0; i < 30; i++ {
+		c, err = dialRPC(dir)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("连接失败: %v", err)
+	}
+	defer c.Close()
+
+	if c.DaemonProto() != ProtoVersion {
+		t.Fatalf("协议版本应为 %d，实际 %d", ProtoVersion, c.DaemonProto())
+	}
+	if c.DaemonVersion() == "" {
+		t.Fatal("握手未返回版本号")
+	}
+}

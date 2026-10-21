@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"argoz/internal/config"
 	"argoz/internal/core"
 	"bufio"
 	"encoding/json"
@@ -50,6 +51,7 @@ type API interface {
 	FindByCredential(cred string) string
 	Uninstall(plan core.UninstallPlan) ([]string, error)
 	DataDir() string
+	DaemonProto() int
 	DaemonVersion() string
 	Info() daemonInfo
 	UpdateCheck() (updateInfo, error)
@@ -249,6 +251,9 @@ func (s *rpcServer) dispatch(req rpcRequest) rpcResponse {
 			return s.fail(err)
 		}
 		return s.ok(s.eng.FindByCredential(p.Cred))
+
+	case "hello":
+		return s.ok(helloResp{Proto: ProtoVersion, Version: config.Version, PID: os.Getpid()})
 
 	case "info":
 		return s.ok(s.eng.Info())

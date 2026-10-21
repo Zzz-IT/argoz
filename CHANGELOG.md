@@ -2,6 +2,17 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [1.3.2] - 2026-10-22
+
+### 新增
+
+- **控制通道握手**：新增 `hello` 命令，返回协议版本 + daemon 版本 + pid；面板据此判断对端是否过旧。
+
+### 修复
+
+- daemon 过旧（不支持 `hello`）时，主菜单明确提示「守护进程版本过旧，请执行 argoz service install」，不再静默显示 `进程号 0 · 内存 0B`。
+- `argoz update` 在 supervisor 模式下更新完成后主动退出，由父进程拉起新版本；此前只打印提示，daemon 一直跑旧代码。
+
 ## [1.3.1] - 2026-10-22
 
 ### 修复
@@ -138,7 +149,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.2
 [1.3.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.1
 [1.3.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.2.0

@@ -47,8 +47,10 @@ func Run(e rpc.API) {
 		if s, _ := hint.Load().(string); s != "" {
 			fmt.Printf("  %s%s%s\n", ColorYellow, s, ColorReset)
 		}
-		if dv := e.DaemonVersion(); dv != "" && dv != config.Version {
-			fmt.Printf("  %s⚠ 守护进程仍是 %s，与面板 %s 不一致，请执行：argoz service install（或 rc-service argoz restart）%s\n",
+		if proto := e.DaemonProto(); proto < 1 {
+			fmt.Printf("  %s⚠ 守护进程版本过旧（不支持控制握手），请执行：argoz service install%s\n", ColorRed, ColorReset)
+		} else if dv := e.DaemonVersion(); dv != "" && dv != config.Version {
+			fmt.Printf("  %s⚠ 守护进程仍是 %s，与面板 %s 不一致，请执行：argoz service install%s\n",
 				ColorYellow, dv, config.Version, ColorReset)
 		}
 

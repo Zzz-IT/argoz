@@ -321,8 +321,10 @@ func RunUpdateCommandLine(args []string, defaultDir string) error {
 	}
 	if restarted {
 		fmt.Println("服务已重启")
+	} else if hasSupervisor() {
+		fmt.Println("supervisor 模式下，退出 daemon 后会自动拉起新版本")
 	} else {
-		fmt.Println("未发现 systemd/OpenRC 服务，请手动重启 argoz 进程")
+		fmt.Println("未发现 systemd/OpenRC/supervisor，请手动重启 argoz 进程")
 	}
 	return nil
 }
@@ -451,16 +453,25 @@ func (e *Engine) UpdateApply() (UpdateResult, error) {
 		return UpdateResult{}, err
 	}
 
-	res := UpdateResult{Replaced: true, Path: exe, Restarted: serviceInstalled()}
-	if res.Restarted {
+	res := UpdateResult{Replaced: true, Path: exe}
+	switch {
+	case serviceInstalled():
+		res.Restarted = true
 		res.Hint = "服务将自动重启并加载新版本"
 		// 先让响应发出去，再触发重启（重启会杀掉当前进程）
 		go func() {
 			time.Sleep(600 * time.Millisecond)
 			_, _ = restartInstalledService()
 		}()
-	} else {
-		res.Hint = "新版本已就位，但未检测到 systemd/OpenRC 服务，需要手动重启 daemon"
+	case hasSupervisor():
+		res.Restarted = true
+		res.Hint = "supervisor 将自动拉起新版本"
+		go func() {
+			time.Sleep(600 * time.Millisecond)
+			os.Exit(0) // 退出后由 argoz --supervise 重新拉起
+		}()
+	default:
+		res.Hint = "新版本已就位，但未检测到 systemd/OpenRC/supervisor，需要手动重启 daemon"
 	}
 	return res, nil
 }

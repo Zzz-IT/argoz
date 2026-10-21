@@ -575,3 +575,6 @@ func (e *Engine) DataDir() string { return e.dataDir }
 
 // DaemonVersion 返回当前引擎版本
 func (e *Engine) DaemonVersion() string { return config.Version }
+
+// DaemonProto 本地引擎恒为当前协议版本
+func (e *Engine) DaemonProto() int { return 1 }

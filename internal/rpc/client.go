@@ -20,6 +20,7 @@ type rpcClient struct {
 	dec           *json.Decoder
 	dir           string
 	daemonVersion string
+	daemonProto   int
 }
 
 func dialRPC(dir string) (*rpcClient, error) {
@@ -33,9 +34,10 @@ func dialRPC(dir string) (*rpcClient, error) {
 		dec:  json.NewDecoder(bufio.NewReader(conn)),
 		dir:  dir,
 	}
-	var info core.DaemonInfo
-	if err := c.call("info", nil, &info); err == nil {
-		c.daemonVersion = info.Version
+	var hello helloResp
+	if err := c.call("hello", nil, &hello); err == nil {
+		c.daemonProto = hello.Proto
+		c.daemonVersion = hello.Version
 	}
 	return c, nil
 }
@@ -264,3 +266,6 @@ func (c *rpcClient) UpdateApply() (updateResult, error) {
 
 // DaemonVersion 返回 daemon 报告的版本（老版本 daemon 可能为空）
 func (c *rpcClient) DaemonVersion() string { return c.daemonVersion }
+
+// DaemonProto 返回 daemon 的协议版本（0 表示老版本不支持握手）
+func (c *rpcClient) DaemonProto() int { return c.daemonProto }
