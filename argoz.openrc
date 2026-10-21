@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+description="argoz - Argo WebSocket relay"
+command="/usr/local/bin/argoz"
+command_args="-d"
+supervisor="supervise-daemon"
+respawn_delay=3
+respawn_max=0
+pidfile="/run/argoz.pid"
+output_log="/var/log/argoz.log"
+error_log="/var/log/argoz.log"
+
+export GOMEMLIMIT=96MiB
+export GOGC=50
+
+depend() {
+    need net
+    after firewall
+    use dns
+}

@@ -1,0 +1,27 @@
+[Unit]
+Description=argoz - Argo WebSocket relay
+After=network-online.target
+Wants=network-online.target
+# 永不因启动失败次数过多而放弃（配置错误时靠进程内退避，不靠 systemd）
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/argoz -d
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+# 小内存机器内存护栏：逼近上限时自动加大 GC，绝不 OOM
+Environment=GOMEMLIMIT=96MiB
+Environment=GOGC=50
+MemoryMax=128M
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/usr/local/etc/argoz
+
+[Install]
+WantedBy=multi-user.target

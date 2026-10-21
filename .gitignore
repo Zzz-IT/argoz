@@ -1,0 +1,6 @@
+argoz
+argoz.exe
+argoz-data/
+argoz-smoke*/
+dist/
+*.test
