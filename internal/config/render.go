@@ -46,12 +46,17 @@ func (n Node) YAML(s Settings) string {
 	var b strings.Builder
 	b.WriteString("- name: " + n.Name + "\n")
 
+	udp := "false"
+	if s.UDPEnabled && n.Protocol == "vless" {
+		udp = "true"
+	}
+
 	if n.Protocol == "trojan" {
 		b.WriteString("  type: trojan\n")
 		b.WriteString("  server: " + domain + "\n")
 		b.WriteString("  port: 443\n")
 		b.WriteString("  password: " + n.Password + "\n")
-		b.WriteString("  udp: true\n")
+		b.WriteString("  udp: " + udp + "\n")
 		b.WriteString("  network: ws\n")
 		b.WriteString("  sni: " + domain + "\n")
 		b.WriteString("  client-fingerprint: chrome\n")
@@ -62,7 +67,7 @@ func (n Node) YAML(s Settings) string {
 		b.WriteString("  port: 443\n")
 		b.WriteString("  uuid: " + n.UUID + "\n")
 		b.WriteString("  tls: true\n")
-		b.WriteString("  udp: true\n")
+		b.WriteString("  udp: " + udp + "\n")
 		b.WriteString("  network: ws\n")
 		b.WriteString("  servername: " + domain + "\n")
 		b.WriteString("  client-fingerprint: chrome\n")

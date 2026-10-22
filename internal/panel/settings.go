@@ -21,6 +21,9 @@ func showSettings(e rpc.API) {
 		fmt.Printf("  4 监听与端口段    %s   %s\n", s.Listen, s.PortRange)
 		fmt.Printf("  5 ECH 注入        %s  %s\n", boolText(s.ECH), stMutedHint("仅在 CF 为该域名启用 ECH 时有效"))
 		fmt.Printf("  6 日志级别        %s\n", levelText(s.LogLevel))
+		fmt.Printf("  7 UDP 转发        %s  %s\n", boolText(s.UDPEnabled), stMutedHint("仅 mihomo VLESS 标准 UDP"))
+		fmt.Printf("  8 UDP 空闲        %s\n", durOrRaw(s.UDPIdle))
+		fmt.Printf("  9 UDP 会话上限    %d\n", s.MaxUDPSessions)
 		fmt.Printf("  %s%s%s\n", ColorGrey, strings.Repeat("─", 56), ColorReset)
 		fmt.Printf("  守护进程   进程号 %d · 已运行 %s · 内存 %s\n",
 			info.PID, durationText(time.Duration(info.UptimeSec)*time.Second), humanBytes(info.MemBytes))
@@ -77,6 +80,29 @@ func showSettings(e rpc.API) {
 			saveSettings(e, s)
 		case "5":
 			s.ECH = !s.ECH
+			saveSettings(e, s)
+		case "7":
+			s.UDPEnabled = !s.UDPEnabled
+			saveSettings(e, s)
+		case "8":
+			v := ReadLine(fmt.Sprintf("  新 UDP 空闲超时 (当前 %s，如 60s): ", s.UDPIdle))
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 10*time.Second {
+				LogErr("时间格式非法（最小 10s）")
+				Pause("")
+				continue
+			}
+			s.UDPIdle = d.String()
+			saveSettings(e, s)
+		case "9":
+			v := ReadLine(fmt.Sprintf("  新 UDP 会话上限 (当前 %d，1-128): ", s.MaxUDPSessions))
+			n, err := parseInt(v)
+			if err != nil || n < 1 || n > 128 {
+				LogErr("数值非法（1-128）")
+				Pause("")
+				continue
+			}
+			s.MaxUDPSessions = n
 			saveSettings(e, s)
 		case "6":
 			v := ReadLine("  日志级别 [1] 错误  [2] 警告  [3] 信息  [4] 调试 (或直接输入 error/warn/info/debug): ")

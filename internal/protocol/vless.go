@@ -66,60 +66,76 @@ func ReadAddr(r io.Reader) (string, error) {
 	return "", fmt.Errorf("不支持的地址类型: %d", atyp[0])
 }
 
-// vlessHandshake 解析 VLESS 请求头，返回目标地址
-func VlessHandshake(r io.Reader, n config.Node) (string, error) {
+// VlessRequest 是 VLESS 请求头解析结果。
+type VlessRequest struct {
+	Target string
+	Cmd    byte
+}
+
+// VlessHandshakeRequest 解析 VLESS 请求头，返回目标地址和命令。
+// 支持 cmd=1（TCP）和 cmd=2（UDP）；其他命令交给上层拒绝。
+func VlessHandshakeRequest(r io.Reader, n config.Node) (VlessRequest, error) {
 	var ver [1]byte
 	if _, err := io.ReadFull(r, ver[:]); err != nil {
-		return "", err
+		return VlessRequest{}, err
 	}
 	if ver[0] != 0 {
-		return "", fmt.Errorf("不支持的 VLESS 版本: %d", ver[0])
+		return VlessRequest{}, fmt.Errorf("不支持的 VLESS 版本: %d", ver[0])
 	}
 
 	var uid [16]byte
 	if _, err := io.ReadFull(r, uid[:]); err != nil {
-		return "", err
+		return VlessRequest{}, err
 	}
 	want, err := ParseUUID(n.UUID)
 	if err != nil {
-		return "", err
+		return VlessRequest{}, err
 	}
 	if subtle.ConstantTimeCompare(uid[:], want[:]) != 1 {
-		return "", errAuthFailed
+		return VlessRequest{}, errAuthFailed
 	}
 
 	var addonLen [1]byte
 	if _, err := io.ReadFull(r, addonLen[:]); err != nil {
-		return "", err
+		return VlessRequest{}, err
 	}
 	if addonLen[0] > 0 {
 		if _, err := io.CopyN(io.Discard, r, int64(addonLen[0])); err != nil {
-			return "", err
+			return VlessRequest{}, err
 		}
 	}
 
 	var cmd [1]byte
 	if _, err := io.ReadFull(r, cmd[:]); err != nil {
-		return "", err
+		return VlessRequest{}, err
 	}
-	if cmd[0] != 0x01 {
-		return "", fmt.Errorf("仅支持 TCP(1)，收到 cmd=%d（Argo 隧道不支持 UDP）", cmd[0])
+	if cmd[0] != 0x01 && cmd[0] != 0x02 {
+		return VlessRequest{}, fmt.Errorf("仅支持 TCP(1) / UDP(2)，收到 cmd=%d", cmd[0])
 	}
 
 	var pb [2]byte
 	if _, err := io.ReadFull(r, pb[:]); err != nil {
-		return "", err
+		return VlessRequest{}, err
 	}
 	port := int(binary.BigEndian.Uint16(pb[:]))
 
 	host, err := ReadVlessAddr(r)
 	if err != nil {
-		return "", err
+		return VlessRequest{}, err
 	}
 	if port == 0 {
-		return "", errors.New("目标端口为 0")
+		return VlessRequest{}, errors.New("目标端口为 0")
 	}
-	return net.JoinHostPort(host, strconv.Itoa(port)), nil
+	return VlessRequest{Target: net.JoinHostPort(host, strconv.Itoa(port)), Cmd: cmd[0]}, nil
+}
+
+// VlessHandshake 保留旧接口：只返回目标，供既有测试/调用使用。
+func VlessHandshake(r io.Reader, n config.Node) (string, error) {
+	req, err := VlessHandshakeRequest(r, n)
+	if err != nil {
+		return "", err
+	}
+	return req.Target, nil
 }
 
 // vlessResponse 写回 VLESS 应答头

@@ -2,6 +2,16 @@ package config
 
 import "testing"
 
+func TestDefaultUDPDisabled(t *testing.T) {
+	s := DefaultSettings()
+	if s.UDPEnabled {
+		t.Fatal("UDP 默认应关闭")
+	}
+	if s.UDPIdle != "60s" || s.MaxUDPSessions != 32 {
+		t.Fatalf("UDP 默认值异常: idle=%s sessions=%d", s.UDPIdle, s.MaxUDPSessions)
+	}
+}
+
 func TestDefaultPortRangeIsAllPorts(t *testing.T) {
 	s := DefaultSettings()
 	if s.PortRange != "1-65535" {

@@ -187,8 +187,12 @@ func detailLines(node Node, st NodeStatus, settings Settings) []string {
 		fmt.Sprintf("  协议    %-14s 监听    %s:%d", node.Protocol, settings.Listen, node.Port),
 		fmt.Sprintf("  路径    %-14s 隧道    %s · %s", orDash(node.Path), modeText(node.Tunnel.Mode), orDash(node.Tunnel.Domain)),
 		fmt.Sprintf("  流量    %-14s 连接    %d", traffic, st.Conns),
-		"",
 	)
+	if settings.UDPEnabled || st.UDPConns > 0 {
+		lines = append(lines, fmt.Sprintf("  UDP     %-14s 包/字节 %d / %s",
+			fmt.Sprintf("会话 %d", st.UDPConns), st.UDPPackets, humanBytes(st.UDPBytes)))
+	}
+	lines = append(lines, "")
 
 	uri := node.URI(settings)
 	lines = append(lines, "  "+ColorCyan+"── 分享链接 ────────────────────────────────────"+ColorReset)

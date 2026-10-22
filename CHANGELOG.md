@@ -2,6 +2,34 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [Unreleased]
+
+### 新增
+
+- **mihomo VLESS UDP（可选）**：新增 `UDP 转发` 设置开关、`UDP 空闲` 和 `UDP 会话上限`；默认关闭，只支持 mihomo 标准 VLESS UDP（`cmd=0x02`），不支持 XUDP/mux。
+- UDP 按每流独立 VLESS/WS 连接处理，使用已连接 UDP socket、64KB 缓冲和 32 个默认会话上限，避免 128MB VPS 内存和 fd 压力。
+
+### 说明
+
+- `mihomo` 需要设置 `udp: true`；建议单独 UDP outbound + 规则选择性使用，DNS 优先 DoH/DoT。
+
+## [1.3.4] - 2026-10-23
+
+### 新增
+
+- **VLESS UDP 转发（实验性，默认关闭）**：实现 VLESS `cmd=0x02`，把 UDP 数据报（`[2B 长度][载荷]`）转成真实 UDP 发出并回填。
+  - 每条 VLESS 连接对应一条独立 UDP 会话，互不干扰
+  - 64KB 缓冲池、空闲回收、会话数上限、包/字节统计
+  - 设置页新增 `7 UDP 转发`、`8 UDP 空闲`（默认 60s）、`9 UDP 会话上限`（默认 32，最大 128）
+  - 节点详情页显示 UDP 会话 / 包数 / 字节
+  - 生成的 mihomo 片段中 `udp:` 跟随开关；Trojan 恒为 false
+
+### 说明
+
+- 仅支持 **mihomo / sing-box 的标准 VLESS UDP**；不支持 XUDP（`xudp`）、mux
+- Trojan UDP（UDP ASSOCIATE）尚未实现
+- Cloudflare 隧道本身不支持原生 UDP，此处为 UDP over TCP
+
 ## [1.3.3] - 2026-10-23
 
 ### 新增
@@ -162,7 +190,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.4
 [1.3.3]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.3
 [1.3.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.2
 [1.3.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.1

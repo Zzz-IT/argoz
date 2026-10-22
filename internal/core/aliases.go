@@ -11,10 +11,11 @@ import (
 )
 
 type (
-	Node      = config.Node
-	Settings  = config.Settings
-	Config    = config.Config
-	TunnelCfg = config.TunnelCfg
+	Node         = config.Node
+	Settings     = config.Settings
+	Config       = config.Config
+	TunnelCfg    = config.TunnelCfg
+	VlessRequest = protocol.VlessRequest
 )
 
 var (
@@ -50,13 +51,14 @@ var (
 )
 
 var (
-	retryHint       = RetryHint
-	readVlessAddr   = protocol.ReadVlessAddr
-	parseUUID       = protocol.ParseUUID
-	normalizeUUID   = protocol.NormalizeUUID
-	vlessHandshake  = protocol.VlessHandshake
-	vlessResponse   = protocol.VlessResponse
-	trojanHandshake = protocol.TrojanHandshake
+	retryHint             = RetryHint
+	readVlessAddr         = protocol.ReadVlessAddr
+	parseUUID             = protocol.ParseUUID
+	normalizeUUID         = protocol.NormalizeUUID
+	vlessHandshake        = protocol.VlessHandshake
+	vlessHandshakeRequest = protocol.VlessHandshakeRequest
+	vlessResponse         = protocol.VlessResponse
+	trojanHandshake       = protocol.TrojanHandshake
 )
 
 var (

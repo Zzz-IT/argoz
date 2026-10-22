@@ -19,7 +19,7 @@ const (
 )
 
 // Version 发布时由 CI 通过 -ldflags "-X argoz/internal/config.Version=vX.Y.Z" 注入
-var Version = "v1.3.3"
+var Version = "v1.3.4"
 
 // AppVersion 发布时由 CI 通过 -ldflags "-X main.AppVersion=v1.0.0" 注入
 var AppVersion = "v1.2.0"
@@ -55,13 +55,16 @@ func (n Node) Credential() string {
 
 // Settings 全局设置
 type Settings struct {
-	Listen      string `json:"listen"`
-	PortRange   string `json:"port_range"`
-	MaxConns    int    `json:"max_conns"`
-	Keepalive   string `json:"keepalive"`
-	IdleTimeout string `json:"idle_timeout"`
-	ECH         bool   `json:"ech"`
-	LogLevel    string `json:"log_level"`
+	Listen         string `json:"listen"`
+	PortRange      string `json:"port_range"`
+	MaxConns       int    `json:"max_conns"`
+	Keepalive      string `json:"keepalive"`
+	IdleTimeout    string `json:"idle_timeout"`
+	UDPEnabled     bool   `json:"udp_enabled"`
+	UDPIdle        string `json:"udp_idle"`
+	MaxUDPSessions int    `json:"max_udp_sessions"`
+	ECH            bool   `json:"ech"`
+	LogLevel       string `json:"log_level"`
 }
 
 func (s Settings) KeepaliveDur() time.Duration {
@@ -78,6 +81,27 @@ func (s Settings) IdleDur() time.Duration {
 		return 5 * time.Minute
 	}
 	return d
+}
+
+// UDPIdleDur UDP 会话空闲回收时间，默认 60s。
+func (s Settings) UDPIdleDur() time.Duration {
+	d, err := time.ParseDuration(s.UDPIdle)
+	if err != nil || d < 10*time.Second {
+		return 60 * time.Second
+	}
+	return d
+}
+
+// MaxUDPSessionsOrDefault 限制 UDP 会话数，默认 32，最大 128。
+func (s Settings) MaxUDPSessionsOrDefault() int {
+	n := s.MaxUDPSessions
+	if n <= 0 {
+		return 32
+	}
+	if n > 128 {
+		return 128
+	}
+	return n
 }
 
 // PortBounds 解析端口段
@@ -105,13 +129,16 @@ type Config struct {
 
 func DefaultSettings() Settings {
 	return Settings{
-		Listen:      "127.0.0.1",
-		PortRange:   "1-65535",
-		MaxConns:    128,
-		Keepalive:   "30s",
-		IdleTimeout: "5m",
-		ECH:         true,
-		LogLevel:    "info",
+		Listen:         "127.0.0.1",
+		PortRange:      "1-65535",
+		MaxConns:       128,
+		Keepalive:      "30s",
+		IdleTimeout:    "5m",
+		UDPEnabled:     false,
+		UDPIdle:        "60s",
+		MaxUDPSessions: 32,
+		ECH:            true,
+		LogLevel:       "info",
 	}
 }
 
@@ -193,6 +220,15 @@ func (c *Config) fixup() {
 	}
 	if c.Settings.IdleTimeout == "" {
 		c.Settings.IdleTimeout = d.IdleTimeout
+	}
+	if c.Settings.UDPIdle == "" {
+		c.Settings.UDPIdle = d.UDPIdle
+	}
+	if c.Settings.MaxUDPSessions <= 0 {
+		c.Settings.MaxUDPSessions = d.MaxUDPSessions
+	}
+	if c.Settings.MaxUDPSessions > 128 {
+		c.Settings.MaxUDPSessions = 128
 	}
 	if c.Settings.LogLevel == "" {
 		c.Settings.LogLevel = d.LogLevel

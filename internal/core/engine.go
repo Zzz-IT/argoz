@@ -65,15 +65,18 @@ func (e *Engine) Node(id string) (Node, bool) {
 
 // NodeStatus 面板展示用的快照
 type NodeStatus struct {
-	Node      Node
-	State     string
-	Err       string
-	Conns     int64
-	Total     int64
-	Up        int64
-	Down      int64
-	NextRetry time.Time
-	Restarts  int
+	Node       Node
+	State      string
+	Err        string
+	Conns      int64
+	Total      int64
+	Up         int64
+	Down       int64
+	UDPConns   int64
+	UDPPackets int64
+	UDPBytes   int64
+	NextRetry  time.Time
+	Restarts   int
 }
 
 func (e *Engine) Statuses() []NodeStatus {
@@ -99,6 +102,9 @@ func (e *Engine) Statuses() []NodeStatus {
 			st.Total = rt.total.Load()
 			st.Up = rt.up.Load()
 			st.Down = rt.down.Load()
+			st.UDPConns = rt.udpConns.Load()
+			st.UDPPackets = rt.udpPackets.Load()
+			st.UDPBytes = rt.udpBytes.Load()
 
 			if rt.tun != nil {
 				ts, terr, next, restarts := rt.tun.Info()
@@ -517,6 +523,9 @@ func (e *Engine) SaveSettings(s Settings) error {
 		rt.mu.Lock()
 		rt.settings = s
 		rt.mu.Unlock()
+		if !s.UDPEnabled {
+			rt.closeUDPSessions()
+		}
 	}
 	return err
 }

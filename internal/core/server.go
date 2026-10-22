@@ -47,6 +47,12 @@ type nodeRuntime struct {
 	wsMu     sync.Mutex
 	wsConns  map[*wsConn]struct{}
 	stopping bool
+
+	udpMu       sync.Mutex
+	udpSessions map[*udpSession]struct{}
+	udpConns    atomic.Int64
+	udpPackets  atomic.Int64
+	udpBytes    atomic.Int64
 }
 
 func (rt *nodeRuntime) snapshot() (Node, Settings) {
@@ -166,11 +172,12 @@ func (rt *nodeRuntime) serve(ws *wsConn, node Node, settings Settings) {
 
 	stage := "handshake"
 	var target string
+	var vlessReq VlessRequest
 
 	var err error
 	switch node.Protocol {
 	case "vless":
-		target, err = vlessHandshake(ws, node)
+		vlessReq, err = vlessHandshakeRequest(ws, node)
 		if err == nil {
 			err = vlessResponse(ws)
 		}
@@ -184,6 +191,18 @@ func (rt *nodeRuntime) serve(ws *wsConn, node Node, settings Settings) {
 		return
 	}
 	_ = ws.SetReadDeadline(time.Time{})
+
+	if vlessReq.Cmd == 0x02 {
+		if !settings.UDPEnabled {
+			rt.setError("UDP 转发未启用")
+			return
+		}
+		rt.serveUDP(ws, vlessReq.Target, settings)
+		return
+	}
+	if node.Protocol == "vless" {
+		target = vlessReq.Target
+	}
 
 	stage = "dial"
 	d := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 15 * time.Second}
@@ -352,6 +371,7 @@ func (rt *nodeRuntime) startServer(ln net.Listener) {
 // stopServer 优雅关闭；hijacked 的 WS 连接需要显式关闭。
 func (rt *nodeRuntime) stopServer() {
 	rt.abortWSConns()
+	rt.closeUDPSessions()
 
 	if rt.srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

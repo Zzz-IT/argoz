@@ -104,6 +104,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh)
 - **5 级保活 + 分层重试**：2s→4s→8s→3min×20→60min，±20% 抖动，稳定 10 分钟清零
 - **端到端探针**：有流量时 60s、空闲 3min 探测域名，连续失败重启隧道
 - **日志**：4 级过滤、5MB 轮转、面板内可查
+- **UDP（仅 mihomo VLESS）**：设置页可选开启，按 mihomo 规则选择性转发；默认关闭
 - **内置服务托管**：`argoz service install/status/uninstall` 自动适配 systemd / OpenRC
 - **自更新**：`argoz update` 下载、SHA256 校验、原子替换并重启服务；`--check` 只查版本
 - **Alpine 自愈**：daemon 启动时检查并尝试补齐 `ca-certificates` / `tzdata` / `gcompat`
@@ -241,7 +242,37 @@ bash install.sh --uninstall --purge  # 连配置、日志、cloudflared 一起�
 | 空闲超时 | 5m | 双向无流量强制下线 |
 | 监听与端口段 | 127.0.0.1 / 1-65535 | 自动分配范围（从 1024 起）；可写单端口如 `8080-8080` |
 | ECH 注入 | 开 | 链接/YAML 的 SNI 写成 cloudflare-ech.com |
+| UDP 转发 | 关 | 仅 mihomo VLESS 标准 UDP；关闭时 UDP 直接拒绝 |
+| UDP 空闲 | 60s | UDP 会话空闲回收时间，建议 < Cloudflare 100s |
+| UDP 会话上限 | 32 | 每节点 UDP 会话数，最大 128 |
 | 日志级别 | info | error / warn / info / debug |
+
+## UDP（仅 mihomo VLESS）
+
+默认关闭。设置页打开 `7 UDP 转发` 后，argoz 只接受 mihomo 的标准 VLESS UDP（`cmd=0x02`），不支持 XUDP/mux；请勿在 mihomo 中开启 XUDP，若版本支持 `packet-encoding` 请使用 `packet`。
+
+每条 UDP 流使用独立的 VLESS/WS 连接，仍走同一条 Argo 隧道；这样某条流丢包不会阻塞其他流。
+
+mihomo 里建议把 UDP 单独放一个 outbound，只给需要的 UDP 规则用：
+
+```yaml
+proxies:
+  - name: argo-udp
+    type: vless
+    server: xxx.trycloudflare.com
+    port: 443
+    uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    network: ws
+    tls: true
+    udp: true
+    # packet-encoding: packet  # 如果你的 mihomo 版本支持，显式使用标准 packet
+    ws-opts:
+      path: /你的路径
+      headers:
+        Host: xxx.trycloudflare.com
+```
+
+规则建议：DNS 用 DoH/DoT，`UDP 443` 直连或拒绝让浏览器回退 TCP，只有确实需要代理的 UDP 应用才走 `argo-udp`；其他 UDP 默认直连。这样 TCP 网页和视频不受 UDP 影响。
 
 ## 兼容性
 
@@ -271,7 +302,7 @@ go vet ./...
 
 ## 说明
 
-- Argo 隧道**只转发 TCP**，不支持 UDP（Hysteria2 / TUIC 不在范围内）
+- Argo 隧道本身**只转发 TCP**；argoz 的 UDP 支持是把 mihomo 的标准 VLESS UDP 封装在 TCP/WS 中（非原生 UDP，Hysteria2 / TUIC 不在范围内）
 - 本地监听是纯 HTTP，TLS 由 Cloudflare 边缘终结，**不需要任何证书**
 - 固定隧道需在 Cloudflare 面板把路由指向 `http://localhost:<节点端口>`
 
