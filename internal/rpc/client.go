@@ -269,3 +269,6 @@ func (c *rpcClient) DaemonVersion() string { return c.daemonVersion }
 
 // DaemonProto 返回 daemon 的协议版本（0 表示老版本不支持握手）
 func (c *rpcClient) DaemonProto() int { return c.daemonProto }
+
+// Reload 请求 daemon 原地重启到新二进制
+func (c *rpcClient) Reload() error { return c.call("reload", nil, nil) }

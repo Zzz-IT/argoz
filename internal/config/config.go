@@ -19,7 +19,7 @@ const (
 )
 
 // Version 发布时由 CI 通过 -ldflags "-X argoz/internal/config.Version=vX.Y.Z" 注入
-var Version = "v1.3.4"
+var Version = "v1.3.5"
 
 // AppVersion 发布时由 CI 通过 -ldflags "-X main.AppVersion=v1.0.0" 注入
 var AppVersion = "v1.2.0"
@@ -281,3 +281,40 @@ func (c *Config) NextID() string {
 
 // Dir 返回配置所在目录
 func (c *Config) Dir() string { return filepath.Dir(c.path) }
+
+// CompareVersion 比较两个版本号（忽略 v 前缀与非数字后缀），返回 -1/0/1
+func CompareVersion(a, b string) int {
+	pa := strings.Split(strings.TrimPrefix(strings.TrimSpace(a), "v"), ".")
+	pb := strings.Split(strings.TrimPrefix(strings.TrimSpace(b), "v"), ".")
+	n := len(pa)
+	if len(pb) > n {
+		n = len(pb)
+	}
+	num := func(s string) int {
+		i := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == 0 {
+			return 0
+		}
+		v, _ := strconv.Atoi(s[:i])
+		return v
+	}
+	for i := 0; i < n; i++ {
+		var x, y int
+		if i < len(pa) {
+			x = num(pa[i])
+		}
+		if i < len(pb) {
+			y = num(pb[i])
+		}
+		if x < y {
+			return -1
+		}
+		if x > y {
+			return 1
+		}
+	}
+	return 0
+}

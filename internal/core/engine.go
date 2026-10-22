@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -587,3 +589,14 @@ func (e *Engine) DaemonVersion() string { return config.Version }
 
 // DaemonProto 本地引擎恒为当前协议版本
 func (e *Engine) DaemonProto() int { return 1 }
+
+// ReloadSelf 原地替换为新二进制（Linux execve，PID 不变）。
+// 执行前主动释放实例锁与心跳文件，否则新镜像会把自己当成"已有实例"而拒绝启动。
+func (e *Engine) ReloadSelf() error {
+	_ = os.Remove(filepath.Join(e.dataDir, "argoz.lock"))
+	_ = os.Remove(HeartbeatPath(e.dataDir))
+	return execSelf()
+}
+
+// Reload 满足 rpc.API（本地引擎直接原地重启）
+func (e *Engine) Reload() error { return e.ReloadSelf() }

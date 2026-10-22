@@ -37,3 +37,21 @@ func TestPortRangeMigratesFromOldDefault(t *testing.T) {
 		t.Fatalf("自定义范围被误改: %s", c2.Settings.PortRange)
 	}
 }
+
+func TestCompareVersion(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"v1.3.4", "v1.3.3", 1},
+		{"v1.3.3", "v1.3.4", -1},
+		{"v1.3.3", "v1.3.3", 0},
+		{"1.3.10", "1.3.9", 1},
+		{"v1.3", "v1.3.0", 0},
+	}
+	for _, c := range cases {
+		if got := CompareVersion(c.a, c.b); got != c.want {
+			t.Fatalf("CompareVersion(%q,%q)=%d，期望 %d", c.a, c.b, got, c.want)
+		}
+	}
+}

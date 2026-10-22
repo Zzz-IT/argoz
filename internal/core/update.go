@@ -454,7 +454,18 @@ func (e *Engine) UpdateApply() (UpdateResult, error) {
 	}
 
 	res := UpdateResult{Replaced: true, Path: exe}
+	_, conns, _, _ := e.Totals()
 	switch {
+	case conns == 0:
+		// 空闲时直接 execve 原地换版本，PID 不变，无需托管方
+		res.Restarted = true
+		res.Hint = "正在原地重启到新版本"
+		go func() {
+			time.Sleep(600 * time.Millisecond)
+			if err := e.ReloadSelf(); err != nil {
+				_, _ = restartInstalledService()
+			}
+		}()
 	case serviceInstalled():
 		res.Restarted = true
 		res.Hint = "服务将自动重启并加载新版本"

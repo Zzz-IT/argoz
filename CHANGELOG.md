@@ -13,6 +13,19 @@
 
 - `mihomo` 需要设置 `udp: true`；建议单独 UDP outbound + 规则选择性使用，DNS 优先 DoH/DoT。
 
+## [1.3.5] - 2026-10-23
+
+### 新增
+
+- **守护进程自愈重启**：面板启动时比对 daemon 版本，落后则自动发起原地重启（RPC `reload` → `execve`），**PID 不变**；10 分钟内最多自动重启 2 次，失败才回退到原来的黄色警告。
+- **更新后自动生效**：`argoz update` 与面板「检查更新」在无活跃连接时直接 execve 换版本，不再依赖 systemd / OpenRC / supervisor。
+
+### 说明
+
+- execve 仅 Linux 支持；其他平台回退到服务重启或提示手动重启。
+- 原地重启前会主动释放 `argoz.lock` 与心跳文件，避免新镜像把自己判为“已有实例”而拒绝启动。
+- 有活跃连接时不自动重启，保持流量不中断。
+
 ## [1.3.4] - 2026-10-23
 
 ### 新增
@@ -190,7 +203,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.4...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.5...HEAD
+[1.3.5]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.5
 [1.3.4]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.4
 [1.3.3]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.3
 [1.3.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.2

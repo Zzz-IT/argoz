@@ -52,6 +52,7 @@ type API interface {
 	Uninstall(plan core.UninstallPlan) ([]string, error)
 	DataDir() string
 	DaemonProto() int
+	Reload() error
 	DaemonVersion() string
 	Info() daemonInfo
 	UpdateCheck() (updateInfo, error)
@@ -254,6 +255,18 @@ func (s *rpcServer) dispatch(req rpcRequest) rpcResponse {
 
 	case "hello":
 		return s.ok(helloResp{Proto: ProtoVersion, Version: config.Version, PID: os.Getpid()})
+
+	case "reload":
+		go func() {
+			// 先把响应发出去，再原地替换进程镜像
+			time.Sleep(200 * time.Millisecond)
+			if r, ok := s.eng.(interface{ ReloadSelf() error }); ok {
+				if err := r.ReloadSelf(); err != nil {
+					LogWarn("原地重启失败: %v", err)
+				}
+			}
+		}()
+		return s.ok(true)
 
 	case "info":
 		return s.ok(s.eng.Info())

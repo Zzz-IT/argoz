@@ -10,6 +10,8 @@ import (
 )
 
 func Run(e rpc.API) {
+	maybeAutoReload(e)
+
 	var hint atomic.Value
 	hint.Store("")
 	go func() {
