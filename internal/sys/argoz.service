@@ -6,7 +6,9 @@ Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+WatchdogSec=120
 ExecStart=/usr/local/bin/argoz -d
 Restart=always
 RestartSec=3

@@ -2,6 +2,19 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [1.3.3] - 2026-10-23
+
+### 新增
+
+- **心跳与假死检测**：daemon 每 10 秒写 `<数据目录>/argoz.heartbeat`，并发送 systemd `WATCHDOG=1`。
+  - systemd 单元改用 `Type=notify` + `NotifyAccess=main` + `WatchdogSec=120`，进程卡死会被系统强杀重启
+  - `argoz --supervise` 每 15 秒检查心跳，超过 90 秒未更新即判定假死，强杀后重启
+
+### 调整
+
+- **退避上限从 60 分钟降到 10 分钟**：网络恢复后最多等 10 分钟即可重连，不再可能挂 1 小时。
+- **端到端探活提速**：有连接时 60s → **45s**，空闲 180s → **90s**，隧道异常发现更早。
+
 ## [1.3.2] - 2026-10-22
 
 ### 新增
@@ -149,7 +162,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.3
 [1.3.2]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.2
 [1.3.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.1
 [1.3.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.0

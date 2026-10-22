@@ -97,6 +97,10 @@ func runDaemon(dir string) {
 	e.StartHealth()
 	defer e.Shutdown()
 
+	// 心跳文件 + systemd watchdog（假死检测）
+	stopBeat := core.StartHeartbeat(cfg.Dir())
+	defer stopBeat()
+
 	srv, err := rpc.Start(e, cfg.Dir())
 	if err != nil {
 		logx.LogErr("启动控制通道失败: %v", err)

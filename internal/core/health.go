@@ -19,8 +19,8 @@ import (
 
 const (
 	l1Interval    = 15 * time.Second // L1 本地探针间隔
-	l3BusyEvery   = 4                // ×15s = 60s，有连接时做端到端探活
-	l3IdleEvery   = 12               // ×15s = 180s，空闲时做端到端探活
+	l3BusyEvery   = 3                // ×15s = 45s，有连接时做端到端探活
+	l3IdleEvery   = 6                // ×15s = 90s，空闲时做端到端探活
 	sweepEvery    = 240              // ×15s = 60min，全量巡检
 	l1Strike      = 3                // L1 连续失败阈值
 	l3Strike      = 2                // L3 连续失败阈值

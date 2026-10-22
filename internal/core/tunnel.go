@@ -34,7 +34,7 @@ func defaultPolicy() backoffPolicy {
 		fast:  []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second},
 		slow:  3 * time.Minute,
 		slowN: 20,
-		ultra: 60 * time.Minute,
+		ultra: 10 * time.Minute,
 	}
 }
 

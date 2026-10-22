@@ -31,7 +31,7 @@ func stubFakeCloudflared(t *testing.T) {
 }
 
 // 验证：永久性错误 -> 第 2 次起直接进入 60 分钟档，状态为 degraded
-func TestTunnelHardFailGoesHourly(t *testing.T) {
+func TestTunnelHardFailGoesBackoffMax(t *testing.T) {
 	e, _ := newTestEngine(t)
 	stubFakeCloudflared(t)
 
@@ -45,7 +45,7 @@ func TestTunnelHardFailGoesHourly(t *testing.T) {
 		t.Fatal("隧道未启动")
 	}
 
-	// 等两次失败：首次 ~0s 失败 -> 2s 后重试 -> 再失败 -> 60min
+	// 等两次失败：首次 ~0s 失败 -> 2s 后重试 -> 再失败 -> 退避上限（10min）
 	deadline := time.Now().Add(8 * time.Second)
 	var state string
 	var next time.Time
@@ -61,8 +61,8 @@ func TestTunnelHardFailGoesHourly(t *testing.T) {
 		t.Fatalf("永久性错误应进入 degraded，实际 %q", state)
 	}
 	d := time.Until(next)
-	if d < 40*time.Minute || d > 75*time.Minute {
-		t.Fatalf("下一次重试应在 60 分钟档（含抖动），实际 %s", d)
+	if d < 7*time.Minute || d > 13*time.Minute {
+		t.Fatalf("下一次重试应在 10 分钟档（含 ±20%% 抖动），实际 %s", d)
 	}
 }
 
