@@ -9,14 +9,17 @@ import (
 )
 
 type (
-	Node         = core.Node
-	Settings     = core.Settings
-	NodeStatus   = core.NodeStatus
-	NodeSpec     = core.NodeSpec
-	daemonInfo   = core.DaemonInfo
-	updateInfo   = core.UpdateInfo
-	updateResult = core.UpdateResult
-	NodePatch    = core.NodePatch
+	Node           = core.Node
+	Settings       = core.Settings
+	NodeStatus     = core.NodeStatus
+	NodeSpec       = core.NodeSpec
+	daemonInfo     = core.DaemonInfo
+	updateInfo     = core.UpdateInfo
+	updateResult   = core.UpdateResult
+	DoctorReport   = core.DoctorReport
+	DoctorCheck    = core.DoctorCheck
+	ArtifactStatus = core.ArtifactStatus
+	NodePatch      = core.NodePatch
 )
 
 var (

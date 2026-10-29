@@ -26,6 +26,36 @@ type UpdateResult struct {
 	Hint      string `json:"hint"`
 }
 
+// DoctorCheck 单项自检结果。
+type DoctorCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // ok | warn | error
+	Detail string `json:"detail"`
+	Repair string `json:"repair,omitempty"`
+}
+
+// DoctorReport 自检汇总。
+type DoctorReport struct {
+	Healthy        bool          `json:"healthy"`
+	Checks         []DoctorCheck `json:"checks"`
+	Summary        string        `json:"summary"`
+	MemTotalMB     int           `json:"mem_total_mb"`
+	MemAvailableMB int           `json:"mem_available_mb"`
+	LowMemory      bool          `json:"low_memory"`
+}
+
+// ArtifactStatus 二进制资源状态。
+type ArtifactStatus struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+	Healthy   bool   `json:"healthy"`
+	Cached    bool   `json:"cached"`
+	Size      int64  `json:"size"`
+	LastError string `json:"last_error,omitempty"`
+}
+
 // NodePatch 面板可修改的字段（空值表示不改）
 type NodePatch struct {
 	Name       string `json:"name,omitempty"`

@@ -105,6 +105,10 @@ bash <(wget -qO- https://raw.githubusercontent.com/Zzz-IT/argoz/main/install.sh)
 - **端到端探针**：有流量时 60s、空闲 3min 探测域名，连续失败重启隧道
 - **日志**：4 级过滤、5MB 轮转、面板内可查
 - **UDP（仅 mihomo VLESS）**：设置页可选开启，按 mihomo 规则选择性转发；默认关闭
+- **统一资源管理**：argoz / cloudflared 共用缓存、锁、SHA256/ELF 校验、原子替换与失败冷却，安装脚本重复执行不重复下载
+- **事务化升级**：下载超时、断点、备份、替换后验证、失败回滚；本体与 cloudflared 分开升级/重装
+- **自检与修复**：只读诊断 daemon/RPC/二进制/权限/依赖/内存/磁盘/端口，用户确认后执行有限安全修复
+- **低内存模式**：总内存 ≤96MB 自动采用较低并发、UDP 配额和 GC 限制，并做可用内存准入
 - **内置服务托管**：`argoz service install/status/uninstall` 自动适配 systemd / OpenRC
 - **自更新**：`argoz update` 下载、SHA256 校验、原子替换并重启服务；`--check` 只查版本
 - **Alpine 自愈**：daemon 启动时检查并尝试补齐 `ca-certificates` / `tzdata` / `gcompat`
@@ -127,8 +131,10 @@ argoz/
 ├── main.go                入口：flag 分发、daemon / panel / supervisor
 ├── supervise.go           自守护父进程
 ├── internal/
+│   ├── artifact/          二进制缓存、断点下载、校验、原子替换、备份/回滚
 │   ├── config/            Node / Settings / Config、URI 与 YAML 生成
-│   ├── core/              engine、relay(WS+HTTP)、tunnel、health、lock、update、uninstall
+│   ├── core/              engine、relay(WS+HTTP)、tunnel、health、lock、update、uninstall、doctor 接口
+│   ├── doctor/            只读自检（daemon/RPC/二进制/依赖/内存/磁盘/端口）
 │   ├── rpc/               本地控制通道（服务端 + 客户端）
 │   ├── panel/             全部终端页面（列表/详情/设置/日志/状态/更新/自检）
 │   ├── protocol/          VLESS / Trojan 握手
@@ -244,7 +250,8 @@ bash install.sh --uninstall --purge  # 连配置、日志、cloudflared 一起�
 | ECH 注入 | 开 | 链接/YAML 的 SNI 写成 cloudflare-ech.com |
 | UDP 转发 | 关 | 仅 mihomo VLESS 标准 UDP；关闭时 UDP 直接拒绝 |
 | UDP 空闲 | 60s | UDP 会话空闲回收时间，建议 < Cloudflare 100s |
-| UDP 会话上限 | 32 | 每节点 UDP 会话数，最大 128 |
+| UDP 会话上限 | 32 | 每节点 UDP 会话数，最大 128；低内存模式运行期上限 8 |
+| 内存模式 | auto | auto / low / normal；总内存 ≤96MB 自动按低内存基线运行 |
 | 日志级别 | info | error / warn / info / debug |
 
 ## UDP（仅 mihomo VLESS）
@@ -273,6 +280,36 @@ proxies:
 ```
 
 规则建议：DNS 用 DoH/DoT，`UDP 443` 直连或拒绝让浏览器回退 TCP，只有确实需要代理的 UDP 应用才走 `argo-udp`；其他 UDP 默认直连。这样 TCP 网页和视频不受 UDP 影响。
+
+## 运维、自检与本体维护
+
+首页现在提供两个独立入口：
+
+- **6 自检与修复**：只读检查 daemon/RPC、argoz/cloudflared 二进制权限与 `--version`、配置、Alpine 依赖、内存、磁盘、节点端口；用户选中并二次确认后才执行 `chmod`、`locks`、`env`、`config`、`cloudflared` 等有限修复。永久性二进制错误不会被无限重试，而是停在可操作状态。
+- **7 本体维护**：argoz 与 cloudflared 分别提供检查更新、升级、强制重装、查看路径/版本/缓存。下载、SHA256/ELF 校验、备份、原子替换和失败回滚都由 daemon 统一处理，面板不会重复下载。
+
+安装和升级建议：
+
+```bash
+bash install.sh          # 幂等：已有健康 argoz/cloudflared 时跳过下载
+bash install.sh --force  # 仅需要强制重装时使用
+argoz update --check
+argoz update --component self
+argoz update --component cloudflared
+argoz update --offline
+argoz update --rollback
+```
+
+## 低内存模式
+
+`MemoryMode=auto` 在总内存 ≤96MB 时自动启用低内存基线：
+
+- 默认并发上限 24、UDP 会话上限 8，UDP 仍默认关闭；
+- 运行期设置 Go `GOGC=50` / `GOMEMLIMIT=40MiB`，cloudflared 子进程继承更低的 Go 内存目标；
+- 可用内存低于 16MB 时拒绝新 WS 会话（503），优先保护已有连接；
+- 不后台预下载资源；安装脚本和面板只在缺失/损坏或用户确认时下载。
+
+可用 `auto / low / normal` 手动覆盖；64MB 机器建议 `low`，并只运行 1 个节点。
 
 ## 兼容性
 

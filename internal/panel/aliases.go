@@ -15,6 +15,15 @@ type (
 	NodeSpec      = core.NodeSpec
 	UninstallPlan = core.UninstallPlan
 	Config        = config.Config
+
+	// rpc 新接口使用 core 中的导出类型；这里做面板内别名，
+	// 避免依赖 rpc 包里的未导出兼容别名。
+	DaemonInfo     = core.DaemonInfo
+	UpdateInfo     = core.UpdateInfo
+	UpdateResult   = core.UpdateResult
+	DoctorReport   = core.DoctorReport
+	DoctorCheck    = core.DoctorCheck
+	ArtifactStatus = core.ArtifactStatus
 )
 
 var (

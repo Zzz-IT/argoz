@@ -26,3 +26,16 @@ type nodeResp struct {
 	Node Node `json:"node"`
 	OK   bool `json:"ok"`
 }
+
+type componentReq struct {
+	Component string `json:"component"`
+}
+
+type actionReq struct {
+	Action string `json:"action"`
+}
+
+type applyUpdateReq struct {
+	Component string `json:"component"`
+	Force     bool   `json:"force"`
+}

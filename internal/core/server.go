@@ -134,6 +134,10 @@ func (rt *nodeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if memoryPressure() {
+		http.Error(w, "low memory", http.StatusServiceUnavailable)
+		return
+	}
 
 	// 先原子预占名额，避免并发握手同时通过 Load 检查。
 	maxConns := settings.MaxConns

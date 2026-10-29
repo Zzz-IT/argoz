@@ -16,10 +16,20 @@ import (
 const (
 	AppName    = "argoz"
 	configName = "config.json"
+
+	// MemoryModeAuto 根据宿主机总内存自动选择运行基线。
+	MemoryModeAuto = "auto"
+	// MemoryModeLow 显式启用低内存运行基线。
+	MemoryModeLow = "low"
+	// MemoryModeNormal 显式使用普通机器运行基线。
+	MemoryModeNormal = "normal"
+
+	// LowMemoryThresholdMB 是自动启用低内存基线的总内存阈值（含）。
+	LowMemoryThresholdMB = 96
 )
 
 // Version 发布时由 CI 通过 -ldflags "-X argoz/internal/config.Version=vX.Y.Z" 注入
-var Version = "v1.3.5"
+var Version = "v1.3.6"
 
 // AppVersion 发布时由 CI 通过 -ldflags "-X main.AppVersion=v1.0.0" 注入
 var AppVersion = "v1.2.0"
@@ -65,6 +75,8 @@ type Settings struct {
 	MaxUDPSessions int    `json:"max_udp_sessions"`
 	ECH            bool   `json:"ech"`
 	LogLevel       string `json:"log_level"`
+	// MemoryMode 运行内存基线：auto | low | normal。空值按 auto 处理。
+	MemoryMode string `json:"memory_mode"`
 }
 
 func (s Settings) KeepaliveDur() time.Duration {
@@ -127,8 +139,59 @@ type Config struct {
 	path string
 }
 
-func DefaultSettings() Settings {
-	return Settings{
+// NormalizeMemoryMode 将内存模式归一化为 auto/low/normal；空值或未知值按 auto。
+func NormalizeMemoryMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case MemoryModeLow:
+		return MemoryModeLow
+	case MemoryModeNormal:
+		return MemoryModeNormal
+	default:
+		return MemoryModeAuto
+	}
+}
+
+// EffectiveLowMemory 返回当前配置是否应采用低内存运行基线。
+// auto 在已知总内存不超过 96MB 时启用；low 为显式启用；normal 永不启用。
+func (s Settings) EffectiveLowMemory(totalMB int) bool {
+	switch NormalizeMemoryMode(s.MemoryMode) {
+	case MemoryModeLow:
+		return true
+	case MemoryModeNormal:
+		return false
+	default:
+		return totalMB > 0 && totalMB <= LowMemoryThresholdMB
+	}
+}
+
+// detectTotalMemoryMB 读取 Linux /proc/meminfo；其他平台返回 0（未知）。
+// 配置包不引入平台相关依赖，未知总内存时不自动启用低内存基线。
+func detectTotalMemoryMB() int {
+	if runtime.GOOS != "linux" {
+		return 0
+	}
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "MemTotal:" {
+			continue
+		}
+		kb, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || kb <= 0 {
+			return 0
+		}
+		return int(kb / 1024)
+	}
+	return 0
+}
+
+// defaultSettingsForTotalMemory 按已知总内存生成默认设置。
+// totalMB <= 0 表示未知，此时保留普通机器基线。
+func defaultSettingsForTotalMemory(totalMB int) Settings {
+	s := Settings{
 		Listen:         "127.0.0.1",
 		PortRange:      "1-65535",
 		MaxConns:       128,
@@ -139,7 +202,22 @@ func DefaultSettings() Settings {
 		MaxUDPSessions: 32,
 		ECH:            true,
 		LogLevel:       "info",
+		MemoryMode:     MemoryModeNormal,
 	}
+	if totalMB > 0 && totalMB <= LowMemoryThresholdMB {
+		s.MaxConns = 24
+		s.MaxUDPSessions = 8
+		s.UDPEnabled = false
+		s.Keepalive = "30s"
+		s.IdleTimeout = "3m"
+		s.MemoryMode = MemoryModeLow
+	}
+	return s
+}
+
+// DefaultSettings 返回当前宿主机的默认设置。
+func DefaultSettings() Settings {
+	return defaultSettingsForTotalMemory(detectTotalMemoryMB())
 }
 
 // DefaultDataDir 数据目录：优先 ARGOZ_DIR，Windows 下退化为当前目录
@@ -233,6 +311,8 @@ func (c *Config) fixup() {
 	if c.Settings.LogLevel == "" {
 		c.Settings.LogLevel = d.LogLevel
 	}
+	// 旧配置没有 memory_mode；空值按 auto 处理。
+	c.Settings.MemoryMode = NormalizeMemoryMode(c.Settings.MemoryMode)
 	if c.Nodes == nil {
 		c.Nodes = []*Node{}
 	}

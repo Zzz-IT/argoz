@@ -49,8 +49,14 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "artifact":
+			if err := core.RunArtifactCommandLine(args[1:], dataDir); err != nil {
+				fmt.Fprintln(os.Stderr, "错误:", err)
+				os.Exit(1)
+			}
+			return
 		default:
-			fmt.Fprintf(os.Stderr, "未知命令: %s（可用: service, update）\n", args[0])
+			fmt.Fprintf(os.Stderr, "未知命令: %s（可用: service, update, artifact）\n", args[0])
 			os.Exit(2)
 		}
 	}
@@ -85,22 +91,13 @@ func runDaemon(dir string) {
 	}
 	defer logx.CloseLog()
 
-	sys.CheckRuntimeEnv()
-
-	for _, msg := range core.CleanupOrphanCloudflared(cfg) {
-		logx.LogWarn("%s", msg)
-	}
+	cfg.Settings = core.ConfigureMemory(cfg.Settings)
 
 	e := core.NewEngine(cfg, cfg.Dir())
 	e.SetDaemon(true)
-	e.Start()
-	e.StartHealth()
-	defer e.Shutdown()
 
-	// 心跳文件 + systemd watchdog（假死检测）
-	stopBeat := core.StartHeartbeat(cfg.Dir())
-	defer stopBeat()
-
+	// 先启动控制通道和心跳，再启动节点。
+	// 面板等待的是 RPC 可用，不是 cloudflared/隧道已经就绪；环境修复不能阻塞面板。
 	srv, err := rpc.Start(e, cfg.Dir())
 	if err != nil {
 		logx.LogErr("启动控制通道失败: %v", err)
@@ -108,7 +105,17 @@ func runDaemon(dir string) {
 	}
 	defer srv.Shutdown()
 
+	stopBeat := core.StartHeartbeat(cfg.Dir())
+	defer stopBeat()
+
+	logx.LogInfo("%s %s 控制通道已就绪，开始初始化节点", config.AppName, config.Version)
+
+	// 环境检查、孤儿清理和 cloudflared 预热放到后台；即使失败也只影响节点，不影响面板。
 	go func() {
+		sys.CheckRuntimeEnv()
+		for _, msg := range core.CleanupOrphanCloudflared(cfg) {
+			logx.LogWarn("%s", msg)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		if p, err := core.EnsureCloudflared(ctx); err == nil {
@@ -117,6 +124,10 @@ func runDaemon(dir string) {
 			logx.LogWarn("cloudflared 未就绪: %v", err)
 		}
 	}()
+
+	e.Start()
+	e.StartHealth()
+	defer e.Shutdown()
 
 	logx.LogInfo("%s %s daemon 已启动，节点 %d 个，配置目录 %s",
 		config.AppName, config.Version, len(cfg.Nodes), cfg.Dir())

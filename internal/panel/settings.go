@@ -1,13 +1,14 @@
 package panel
 
 import (
-	"argoz/internal/rpc"
 	"fmt"
 	"strings"
 	"time"
+
+	"argoz/internal/rpc"
 )
 
-// showSettings 设置页
+// showSettings 设置页。
 func showSettings(e rpc.API) {
 	for {
 		s := e.Settings()
@@ -24,8 +25,9 @@ func showSettings(e rpc.API) {
 		fmt.Printf("  7 UDP 转发        %s  %s\n", boolText(s.UDPEnabled), stMutedHint("仅 mihomo VLESS 标准 UDP"))
 		fmt.Printf("  8 UDP 空闲        %s\n", durOrRaw(s.UDPIdle))
 		fmt.Printf("  9 UDP 会话上限    %d\n", s.MaxUDPSessions)
+		fmt.Printf(" 10 内存模式        %s  %s\n", memoryModeText(s.MemoryMode), stMutedHint(memoryModeHelp(s.MemoryMode)))
 		fmt.Printf("  %s%s%s\n", ColorGrey, strings.Repeat("─", 56), ColorReset)
-		fmt.Printf("  守护进程   进程号 %d · 已运行 %s · 内存 %s\n",
+		fmt.Printf("  守护进程   PID %d · 已运行 %s · 内存 %s\n",
 			info.PID, durationText(time.Duration(info.UptimeSec)*time.Second), humanBytes(info.MemBytes))
 		fmt.Printf("  版本       %s\n", info.Version)
 		fmt.Printf("  日志文件   %s\n", orDash(panelLogPath(e)))
@@ -46,7 +48,7 @@ func showSettings(e rpc.API) {
 			v := ReadLine(fmt.Sprintf("  新保活间隔 (当前 %s，如 30s): ", s.Keepalive))
 			d, err := time.ParseDuration(v)
 			if err != nil || d < 5*time.Second {
-				LogErr("时间格式非法（最小 5s，如 30s / 1m）")
+				LogErr("时间格式非法（最少 5s，如 30s / 1m）")
 				Pause("")
 				continue
 			}
@@ -56,7 +58,7 @@ func showSettings(e rpc.API) {
 			v := ReadLine(fmt.Sprintf("  新空闲超时 (当前 %s，如 5m): ", s.IdleTimeout))
 			d, err := time.ParseDuration(v)
 			if err != nil || d < 10*time.Second {
-				LogErr("时间格式非法（最小 10s）")
+				LogErr("时间格式非法（最少 10s）")
 				Pause("")
 				continue
 			}
@@ -81,29 +83,6 @@ func showSettings(e rpc.API) {
 		case "5":
 			s.ECH = !s.ECH
 			saveSettings(e, s)
-		case "7":
-			s.UDPEnabled = !s.UDPEnabled
-			saveSettings(e, s)
-		case "8":
-			v := ReadLine(fmt.Sprintf("  新 UDP 空闲超时 (当前 %s，如 60s): ", s.UDPIdle))
-			d, err := time.ParseDuration(v)
-			if err != nil || d < 10*time.Second {
-				LogErr("时间格式非法（最小 10s）")
-				Pause("")
-				continue
-			}
-			s.UDPIdle = d.String()
-			saveSettings(e, s)
-		case "9":
-			v := ReadLine(fmt.Sprintf("  新 UDP 会话上限 (当前 %d，1-128): ", s.MaxUDPSessions))
-			n, err := parseInt(v)
-			if err != nil || n < 1 || n > 128 {
-				LogErr("数值非法（1-128）")
-				Pause("")
-				continue
-			}
-			s.MaxUDPSessions = n
-			saveSettings(e, s)
 		case "6":
 			v := ReadLine("  日志级别 [1] 错误  [2] 警告  [3] 信息  [4] 调试 (或直接输入 error/warn/info/debug): ")
 			switch strings.TrimSpace(v) {
@@ -124,13 +103,54 @@ func showSettings(e rpc.API) {
 			}
 			s.LogLevel = v
 			saveSettings(e, s)
+		case "7":
+			s.UDPEnabled = !s.UDPEnabled
+			saveSettings(e, s)
+		case "8":
+			v := ReadLine(fmt.Sprintf("  新 UDP 空闲超时 (当前 %s，如 60s): ", s.UDPIdle))
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 10*time.Second {
+				LogErr("时间格式非法（最少 10s）")
+				Pause("")
+				continue
+			}
+			s.UDPIdle = d.String()
+			saveSettings(e, s)
+		case "9":
+			v := ReadLine(fmt.Sprintf("  新 UDP 会话上限 (当前 %d，1-128): ", s.MaxUDPSessions))
+			n, err := parseInt(v)
+			if err != nil || n < 1 || n > 128 {
+				LogErr("数值非法（1-128）")
+				Pause("")
+				continue
+			}
+			s.MaxUDPSessions = n
+			saveSettings(e, s)
+		case "10":
+			v := strings.ToLower(strings.TrimSpace(ReadLine("  内存模式 [1] 自动  [2] 低内存  [3] 常规 (或 auto/low/normal): ")))
+			switch v {
+			case "1":
+				v = "auto"
+			case "2":
+				v = "low"
+			case "3":
+				v = "normal"
+			}
+			if !validMemoryMode(v) {
+				LogErr("非法内存模式，仅支持 auto / low / normal")
+				Pause("")
+				continue
+			}
+			s.MemoryMode = v
+			LogInfo("内存模式已设为 %s：下一轮节点启动/重连时按新配额的连接与 UDP 上限执行", memoryModeText(v))
+			saveSettings(e, s)
 		case "0", "":
 			return
 		}
 	}
 }
 
-// durOrRaw 把 "30s" 显示成 "30 秒"，解析失败时原样返回
+// durOrRaw 把 "30s" 显示成 "30 秒"，解析失败时原样返回。
 func durOrRaw(s string) string {
 	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil {
 		return durationText(d)
@@ -151,4 +171,47 @@ func parseInt(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
 	return n, err
+}
+
+// normalizeMemoryModeValue 兼容旧配置/空值：未知值按 auto 展示。
+func normalizeMemoryModeValue(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "low":
+		return "low"
+	case "normal":
+		return "normal"
+	default:
+		return "auto"
+	}
+}
+
+func validMemoryMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto", "low", "normal":
+		return true
+	default:
+		return false
+	}
+}
+
+func memoryModeText(mode string) string {
+	switch normalizeMemoryModeValue(mode) {
+	case "low":
+		return "低内存"
+	case "normal":
+		return "常规"
+	default:
+		return "自动"
+	}
+}
+
+func memoryModeHelp(mode string) string {
+	switch normalizeMemoryModeValue(mode) {
+	case "low":
+		return "限制连接与 UDP 配额，适合 64MB/小内存机器"
+	case "normal":
+		return "使用常规连接与 UDP 配额"
+	default:
+		return "按机器内存自动选择；小内存机器会降为低内存基线"
+	}
 }

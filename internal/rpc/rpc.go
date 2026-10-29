@@ -57,6 +57,11 @@ type API interface {
 	Info() daemonInfo
 	UpdateCheck() (updateInfo, error)
 	UpdateApply() (updateResult, error)
+	Doctor() (DoctorReport, error)
+	Repair(action string) ([]string, error)
+	CloudflaredStatus() (ArtifactStatus, error)
+	CheckUpdate(component string) (updateInfo, error)
+	ApplyUpdate(component string, force bool) (updateResult, error)
 }
 
 // ---------- 控制通道 ----------
@@ -280,6 +285,53 @@ func (s *rpcServer) dispatch(req rpcRequest) rpcResponse {
 
 	case "updateApply":
 		res, err := s.eng.UpdateApply()
+		if err != nil {
+			return s.fail(err)
+		}
+		return s.ok(res)
+
+	case "doctor":
+		report, err := s.eng.Doctor()
+		if err != nil {
+			return s.fail(err)
+		}
+		return s.ok(report)
+
+	case "repair":
+		var p actionReq
+		if err := json.Unmarshal(req.Data, &p); err != nil {
+			return s.fail(err)
+		}
+		lines, err := s.eng.Repair(p.Action)
+		if err != nil {
+			return s.fail(err)
+		}
+		return s.ok(lines)
+
+	case "cloudflaredStatus":
+		status, err := s.eng.CloudflaredStatus()
+		if err != nil {
+			return s.fail(err)
+		}
+		return s.ok(status)
+
+	case "checkUpdate":
+		var p componentReq
+		if err := json.Unmarshal(req.Data, &p); err != nil {
+			return s.fail(err)
+		}
+		info, err := s.eng.CheckUpdate(p.Component)
+		if err != nil {
+			return s.fail(err)
+		}
+		return s.ok(info)
+
+	case "applyUpdate":
+		var p applyUpdateReq
+		if err := json.Unmarshal(req.Data, &p); err != nil {
+			return s.fail(err)
+		}
+		res, err := s.eng.ApplyUpdate(p.Component, p.Force)
 		if err != nil {
 			return s.fail(err)
 		}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +13,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"argoz/internal/artifact"
 )
 
 var domainRe = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
@@ -66,7 +68,7 @@ var jitterFn = func(d time.Duration) time.Duration {
 	return d - time.Duration(delta) + time.Duration(n%(2*delta))
 }
 
-// isHardFail 判定是否为「重试也没用」的永久性错误
+// isHardFail 判定是否为「重试也没用」的永久性隧道配置错误
 func isHardFail(msg string) bool {
 	m := strings.ToLower(msg)
 	for _, k := range []string{"1033", "tunnel not found", "no such tunnel", "unauthorized", "invalid tunnel secret", "invalid token", "failed to unmarshal"} {
@@ -75,6 +77,90 @@ func isHardFail(msg string) bool {
 		}
 	}
 	return false
+}
+
+type tunnelFailureKind int
+
+const (
+	tunnelFailureSoft tunnelFailureKind = iota
+	tunnelFailureBinaryFatal
+	tunnelFailureOOM
+	tunnelFailureStartupTimeout
+)
+
+// tunnelFailure keeps the display message and the underlying wait/start error
+// together so the supervisor can classify fatal binary and OOM failures
+// without parsing a flattened error string.
+type tunnelFailure struct {
+	kind tunnelFailureKind
+	msg  string
+	err  error
+}
+
+func (e *tunnelFailure) Error() string { return e.msg }
+func (e *tunnelFailure) Unwrap() error { return e.err }
+
+// classifyFailureText is deliberately narrow: ordinary network errors remain
+// soft failures and continue through the existing backoff ladder.
+func classifyFailureText(s string) tunnelFailureKind {
+	m := strings.ToLower(s)
+	for _, k := range []string{
+		"permission denied", "operation not permitted", "access is denied", "exec format error",
+		"executable file format", "invalid elf", "cannot execute binary file", "not a valid win32 application",
+		"segmentation fault", "sigsegv", "signal: segmentation fault",
+	} {
+		if strings.Contains(m, k) {
+			return tunnelFailureBinaryFatal
+		}
+	}
+	for _, k := range []string{
+		"out of memory", "cannot allocate memory", "oom-kill", "oom kill",
+		"killed process", "signal: killed", "exit status 137", "exit status 9", "memory allocation failed",
+		"runtime: out of memory",
+	} {
+		if strings.Contains(m, k) {
+			return tunnelFailureOOM
+		}
+	}
+	return tunnelFailureSoft
+}
+
+func classifyTunnelFailure(err error) tunnelFailureKind {
+	if err == nil {
+		return tunnelFailureSoft
+	}
+	if artifact.IsFatalBinaryError(err) {
+		return tunnelFailureBinaryFatal
+	}
+	var tf *tunnelFailure
+	if errors.As(err, &tf) {
+		switch tf.kind {
+		case tunnelFailureBinaryFatal:
+			return tunnelFailureBinaryFatal
+		case tunnelFailureOOM:
+			return tunnelFailureOOM
+		case tunnelFailureStartupTimeout:
+			return tunnelFailureStartupTimeout
+		}
+	}
+	return classifyFailureText(err.Error())
+}
+
+func oomRetryDelay(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	if n > 4 {
+		n = 4
+	}
+	d := 3 * time.Minute
+	for i := 1; i < n; i++ {
+		d *= 2
+	}
+	if d > 24*time.Minute {
+		d = 24 * time.Minute
+	}
+	return jitterFn(d)
 }
 
 // Tunnel 一条隧道的监督器（cloudflared 子进程）
@@ -140,6 +226,7 @@ func (t *Tunnel) name() string {
 func (t *Tunnel) run(ctx context.Context) {
 	p := defaultPolicy()
 	fastIdx, slowCount := 0, 0
+	oomCount := 0
 
 	for {
 		if ctx.Err() != nil {
@@ -162,21 +249,48 @@ func (t *Tunnel) run(ctx context.Context) {
 		if err != nil && err.Error() != "" {
 			msg = err.Error()
 		}
-		hard := isHardFail(msg)
+		kind := classifyTunnelFailure(err)
+
+		// 权限/格式/段错误属于二进制本身损坏，重试不可能自愈。
+		// 保留状态与错误，等待用户修复/重装后通过 RestartTunnel 手动启动。
+		if kind == tunnelFailureBinaryFatal {
+			t.mu.Lock()
+			t.lastErr = msg
+			t.nextRetry = time.Time{}
+			t.state = "err"
+			t.restarts++
+			t.mu.Unlock()
+			t.eng.SetNodeError(t.id, msg)
+			t.eng.persistLastError(t.id, msg)
+			LogErr("节点 [%s] cloudflared 二进制错误，已停止自动重试: %s；请重装/修复 cloudflared 后手动重启该节点", t.name(), msg)
+			return
+		}
 
 		// 稳定运行超过 10 分钟 -> 计数清零，下次故障从 2s 重来
 		if ranFor >= stableRun {
 			fastIdx, slowCount = 0, 0
+			oomCount = 0
 		}
 
-		delay, fi, sc := p.next(fastIdx, slowCount, hard)
-		fastIdx, slowCount = fi, sc
+		var delay time.Duration
+		switch kind {
+		case tunnelFailureOOM:
+			oomCount++
+			delay = oomRetryDelay(oomCount)
+			// 释放已经积累的快速重试计数，OOM 恢复需要更长时间。
+			fastIdx, slowCount = 0, 0
+		default:
+			hard := isHardFail(msg)
+			var fi, sc int
+			delay, fi, sc = p.next(fastIdx, slowCount, hard)
+			fastIdx, slowCount = fi, sc
+		}
 
 		t.mu.Lock()
 		t.lastErr = msg
 		t.restarts++
 		t.nextRetry = time.Now().Add(delay)
-		if delay >= p.slow {
+		if kind == tunnelFailureOOM || delay >= p.slow {
 			t.state = "degraded"
 		} else {
 			t.state = "down"
@@ -186,7 +300,11 @@ func (t *Tunnel) run(ctx context.Context) {
 		t.eng.SetNodeError(t.id, msg)
 		t.eng.persistLastError(t.id, msg)
 
-		LogWarn("节点 [%s] 隧道异常：%s；%s 后重试", t.name(), msg, roundDelay(delay))
+		if kind == tunnelFailureOOM {
+			LogWarn("节点 [%s] cloudflared 疑似 OOM/被系统杀死，延长退避：%s；%s 后重试", t.name(), msg, roundDelay(delay))
+		} else {
+			LogWarn("节点 [%s] 隧道异常：%s；%s 后重试", t.name(), msg, roundDelay(delay))
+		}
 
 		select {
 		case <-ctx.Done():
@@ -223,12 +341,14 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	cmd := commandContext(ctx, bin, args...)
 	cmd.SysProcAttr = ChildDeathAttr()
 	pr, pw := io.Pipe()
+	defer pr.Close()
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 
 	if err := cmd.Start(); err != nil {
-		pw.Close()
-		return fmt.Errorf("启动 cloudflared 失败: %w", err)
+		_ = pw.Close()
+		kind := classifyFailureText(err.Error())
+		return &tunnelFailure{kind: kind, msg: fmt.Sprintf("启动 cloudflared 失败: %v", err), err: err}
 	}
 
 	pidPath := tunnelPIDPath(t.eng, t.id)
@@ -240,19 +360,25 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	waitCh := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
-		pw.Close()
+		_ = pw.Close()
 		waitCh <- err
 	}()
 
-	// 45 秒内没有注册到 Cloudflare 边缘就杀掉重来（避免"进程活着但根本没连上"）
+	// 45 秒内没有注册到 Cloudflare 边缘就杀掉重来（避免"进程活着但根本没连上"）。
+	// 单独记录这是启动超时，不能把随之而来的 signal: killed 误判为 OOM。
+	var startupTimedOut atomic.Bool
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		select {
 		case <-ctx.Done():
+		case <-done:
 		case <-time.After(45 * time.Second):
 			t.mu.Lock()
-			ok := t.state == "up"
+			up := t.state == "up"
 			t.mu.Unlock()
-			if !ok && cmd.Process != nil {
+			if !up && cmd.Process != nil {
+				startupTimedOut.Store(true)
 				_ = cmd.Process.Kill()
 			}
 		}
@@ -301,16 +427,32 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	}
 
 	waitErr := <-waitCh
-	if msg := summariseCloudflared(tail); msg != "" {
-		if waitErr != nil {
-			return fmt.Errorf("%s", msg)
+	fullText := strings.Join(tail, "\n")
+	if startupTimedOut.Load() {
+		return &tunnelFailure{
+			kind: tunnelFailureStartupTimeout,
+			msg:  "cloudflared 45 秒内未注册到 Cloudflare 边缘，已重启",
 		}
-		return fmt.Errorf("%s", msg)
+	}
+	if msg := summariseCloudflared(tail); msg != "" {
+		kind := classifyFailureText(fullText + "\n" + errorString(waitErr))
+		if (kind == tunnelFailureBinaryFatal || kind == tunnelFailureOOM) && waitErr != nil && !strings.Contains(msg, waitErr.Error()) {
+			msg += "；" + waitErr.Error()
+		}
+		return &tunnelFailure{kind: kind, msg: msg, err: waitErr}
 	}
 	if waitErr != nil {
-		return fmt.Errorf("cloudflared 退出: %w", waitErr)
+		kind := classifyFailureText(fullText + "\n" + waitErr.Error())
+		return &tunnelFailure{kind: kind, msg: fmt.Sprintf("cloudflared 退出: %v", waitErr), err: waitErr}
 	}
 	return nil
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // tunnelArgs 构造 cloudflared 参数。
@@ -332,7 +474,7 @@ func summariseCloudflared(lines []string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	keys := []string{"incorrect usage", "flag provided but not defined", "unknown flag", "failed", "error", "err=", "cannot", "no such"}
+	keys := []string{"incorrect usage", "flag provided but not defined", "unknown flag", "failed", "error", "err=", "cannot", "no such", "out of memory", "oom", "segmentation fault", "sigsegv"}
 	for _, l := range lines {
 		low := strings.ToLower(l)
 		for _, k := range keys {
@@ -351,97 +493,206 @@ var (
 	commandContext    = exec.CommandContext
 )
 
-// cfMu 串行化 cloudflared 的查找/下载，避免多节点并发重复下载
-var (
-	cfMu       sync.Mutex
-	cfLastErr  error
-	cfLastFail time.Time
-)
-
-// EnsureCloudflared 查找或安装 cloudflared
-func EnsureCloudflared(ctx context.Context) (string, error) {
-	cfMu.Lock()
-	defer cfMu.Unlock()
-
-	name := "cloudflared"
+func cloudflaredBinaryName() string {
 	if runtime.GOOS == "windows" {
-		name += ".exe"
+		return "cloudflared.exe"
 	}
-
-	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
-	}
-
-	candidates := []string{filepath.Join("/usr/local/bin", name)}
-	if runtime.GOOS == "windows" {
-		candidates = []string{filepath.Join(DefaultDataDir(), name)}
-	}
-	for _, p := range candidates {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Size() > 1<<20 {
-			return p, nil
-		}
-	}
-
-	// 30 秒内失败过则直接复用错误，避免多节点反复拉取
-	if cfLastErr != nil && time.Since(cfLastFail) < 30*time.Second {
-		return "", cfLastErr
-	}
-
-	dest := candidates[0]
-	if err := downloadCloudflared(ctx, dest); err != nil {
-		cfLastErr = fmt.Errorf("未找到 cloudflared 且自动安装失败: %w", err)
-		cfLastFail = time.Now()
-		return "", cfLastErr
-	}
-	cfLastErr = nil
-	LogOK("cloudflared 已安装: %s", dest)
-	return dest, nil
+	return "cloudflared"
 }
 
+// cloudflaredSpec 构造 cloudflared 的统一下载规格。version 为空或 latest
+// 时跟随 GitHub 最新发布，否则使用精确 tag，避免检查与下载之间换版。
+func cloudflaredSpec(version string) (artifact.Spec, error) {
+	if runtime.GOOS != "linux" {
+		return artifact.Spec{}, fmt.Errorf("cloudflared 自动安装仅支持 Linux（当前 %s）", runtime.GOOS)
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		return artifact.Spec{}, fmt.Errorf("不支持的架构: %s", runtime.GOARCH)
+	}
+	version = strings.TrimSpace(version)
+	asset := "cloudflared-linux-" + runtime.GOARCH
+	base := strings.TrimRight(githubWebBase, "/") + "/cloudflare/cloudflared/releases"
+	baseURL := base + "/latest/download/" + asset
+	cacheVersion := "latest"
+	if version != "" && !strings.EqualFold(version, "latest") {
+		cacheVersion = version
+		baseURL = base + "/download/" + version + "/" + asset
+	}
+	return artifact.Spec{
+		Name:    "cloudflared",
+		Version: cacheVersion,
+		Asset:   asset,
+		URL:     baseURL,
+		MinSize: 1 << 20,
+		MaxSize: 256 << 20,
+		Format:  artifact.FormatELF,
+	}, nil
+}
+
+func cloudflaredCandidates() []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		clean := filepath.Clean(p)
+		if !seen[clean] {
+			seen[clean] = true
+			out = append(out, clean)
+		}
+	}
+	if p, err := exec.LookPath(cloudflaredBinaryName()); err == nil {
+		add(p)
+	}
+	if runtime.GOOS == "windows" {
+		add(filepath.Join(DefaultDataDir(), cloudflaredBinaryName()))
+	} else {
+		add(filepath.Join("/usr/local/bin", cloudflaredBinaryName()))
+		add(filepath.Join(DefaultDataDir(), cloudflaredBinaryName()))
+	}
+	return out
+}
+
+func validateCloudflaredAt(ctx context.Context, path string) error {
+	opts := artifact.ValidateOptions{
+		Format:         artifact.FormatELF,
+		MinSize:        1 << 20,
+		MaxSize:        256 << 20,
+		RunVersion:     true,
+		VersionArgs:    []string{"--version"},
+		VersionTimeout: 12 * time.Second,
+	}
+	if runtime.GOOS != "linux" {
+		opts.Format = artifact.FormatAny
+	}
+	return artifact.ValidateBinary(ctx, path, opts)
+}
+
+// findUsableCloudflared 只查找并验证，不触发下载。权限不足时仅尝试 chmod
+// 一次；其他损坏候选被忽略，绝不把未通过 --version 的路径返回给节点。
+func findUsableCloudflared(ctx context.Context) (string, error) {
+	var fatal error
+	var last error
+	for _, path := range cloudflaredCandidates() {
+		err := validateCloudflaredAt(ctx, path)
+		if err == nil {
+			return path, nil
+		}
+		last = err
+		if artifact.IsPermissionError(err) {
+			if chmodErr := os.Chmod(path, 0o755); chmodErr == nil {
+				if retryErr := validateCloudflaredAt(ctx, path); retryErr == nil {
+					LogWarn("已修复 cloudflared 可执行权限: %s", path)
+					return path, nil
+				} else {
+					err = fmt.Errorf("%w；chmod 后仍校验失败: %v", err, retryErr)
+				}
+			} else {
+				err = fmt.Errorf("%w；chmod 0755 失败: %v", err, chmodErr)
+			}
+		}
+		if artifact.IsFatalBinaryError(err) && fatal == nil {
+			fatal = err
+		}
+	}
+	if fatal != nil {
+		return "", fatal
+	}
+	if last != nil {
+		return "", last
+	}
+	return "", os.ErrNotExist
+}
+
+func writableDir(dir string) bool {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".argoz-write-probe-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
+func cloudflaredInstallPath() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(DefaultDataDir(), cloudflaredBinaryName())
+	}
+	dir := "/usr/local/bin"
+	if writableDir(dir) {
+		return filepath.Join(dir, cloudflaredBinaryName())
+	}
+	return filepath.Join(DefaultDataDir(), cloudflaredBinaryName())
+}
+
+// EnsureCloudflared 先验证 PATH 与 /usr/local/bin，再通过 artifact 管理器
+// 单飞下载/缓存/安装。权限、ELF 损坏和 --version 段错误都不会被当成可用路径。
+func EnsureCloudflared(ctx context.Context) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if path, err := findUsableCloudflared(ctx); err == nil {
+		return path, nil
+	}
+
+	spec, err := cloudflaredSpec("latest")
+	if err != nil {
+		return "", err
+	}
+	mgr := artifactManagerFor(DefaultDataDir())
+	target := cloudflaredInstallPath()
+	st, err := mgr.Ensure(ctx, spec, artifact.Options{
+		Force:           false,
+		Offline:         false,
+		Cooldown:        30 * time.Second,
+		Timeout:         4 * time.Minute,
+		ValidateVersion: true,
+		VersionArgs:     []string{"--version"},
+		VersionTimeout:  12 * time.Second,
+		InstallPath:     target,
+		BackupDir:       filepath.Join(DefaultDataDir(), "backups", "cloudflared"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("未找到可用 cloudflared 且自动安装失败: %w", err)
+	}
+	path := strings.TrimSpace(st.Path)
+	if path == "" {
+		path = strings.TrimSpace(st.CachePath)
+	}
+	if path == "" {
+		return "", errors.New("cloudflared 安装后没有返回可用路径")
+	}
+	if err := validateCloudflaredAt(ctx, path); err != nil {
+		return "", fmt.Errorf("cloudflared 安装后复验失败: %w", err)
+	}
+	LogOK("cloudflared 已就绪: %s", path)
+	return path, nil
+}
+
+// downloadCloudflared 保留为包内兼容入口，实际下载/校验/安装全部交给
+// artifact 管理器，避免与 install.sh、update 产生第二套逻辑。
 func downloadCloudflared(ctx context.Context, dest string) error {
-	arch := runtime.GOARCH
-	if arch != "amd64" && arch != "arm64" {
-		return fmt.Errorf("不支持的架构: %s", arch)
-	}
-	url := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-%s", arch)
-
-	LogInfo("正在下载 cloudflared (%s) ...", arch)
-	client := &http.Client{Timeout: 120 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	spec, err := cloudflaredSpec("latest")
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "argoz")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载返回状态码 %d", resp.StatusCode)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
-		return err
-	}
-	tmp := dest + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Chmod(dest, 0o755)
+	mgr := artifactManagerFor(filepath.Dir(dest))
+	_, err = mgr.Ensure(ctx, spec, artifact.Options{
+		Force:              true,
+		Offline:            false,
+		Timeout:            4 * time.Minute,
+		ValidateVersion:    true,
+		ValidateVersionSet: true,
+		VersionArgs:        []string{"--version"},
+		VersionTimeout:     12 * time.Second,
+		InstallPath:        dest,
+		BackupDir:          filepath.Join(filepath.Dir(dest), "backups", "cloudflared"),
+	})
+	return err
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -221,8 +222,16 @@ func EnsureDaemon(dir string) (*rpcClient, error) {
 	}
 
 	cmd := exec.Command(exe, "-d", "-dir", dir)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	// 启动早期日志独立留一份，配置加载失败或 RPC 未就绪时也能诊断。
+	startLogPath := filepath.Join(dir, "argoz.start.log")
+	if f, logErr := os.OpenFile(startLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); logErr == nil {
+		cmd.Stdout = f
+		cmd.Stderr = f
+		defer f.Close()
+	} else {
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+	}
 	cmd.SysProcAttr = DetachAttr()
 
 	if err := cmd.Start(); err != nil {
@@ -236,7 +245,34 @@ func EnsureDaemon(dir string) (*rpcClient, error) {
 			return c, nil
 		}
 	}
-	return nil, fmt.Errorf("daemon 启动超时，请查看日志 %s", LogFilePath())
+	return nil, fmt.Errorf("daemon 启动超时，请查看日志 %s\n%s", filepath.Join(dir, "argoz.log"), daemonStartupDiagnostic(dir))
+}
+
+// daemonStartupDiagnostic 在 RPC 尚未就绪时给出可执行的诊断，而不是只报超时。
+func daemonStartupDiagnostic(dir string) string {
+	var parts []string
+	lockPath := filepath.Join(dir, "argoz.lock")
+	if b, err := os.ReadFile(lockPath); err == nil {
+		parts = append(parts, "实例锁: pid "+strings.TrimSpace(string(b)))
+	} else {
+		parts = append(parts, "实例锁: 不存在")
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "argoz.heartbeat")); err == nil {
+		parts = append(parts, "心跳: "+strings.TrimSpace(string(b)))
+	} else {
+		parts = append(parts, "心跳: 不存在")
+	}
+	if _, err := os.Stat(sockPath(dir)); err == nil {
+		parts = append(parts, "RPC socket: 存在但连接失败")
+	} else {
+		parts = append(parts, "RPC socket: 不存在")
+	}
+	if lines, err := tailLines(filepath.Join(dir, "argoz.log"), 20); err == nil && len(lines) > 0 {
+		parts = append(parts, "最近日志:\n  "+strings.Join(lines, "\n  "))
+	} else if lines, err := tailLines(filepath.Join(dir, "argoz.start.log"), 20); err == nil && len(lines) > 0 {
+		parts = append(parts, "启动日志:\n  "+strings.Join(lines, "\n  "))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // DataDir 返回 daemon 的数据目录
@@ -259,6 +295,46 @@ func (c *rpcClient) UpdateCheck() (updateInfo, error) {
 func (c *rpcClient) UpdateApply() (updateResult, error) {
 	var res updateResult
 	if err := c.call("updateApply", nil, &res); err != nil {
+		return updateResult{}, err
+	}
+	return res, nil
+}
+
+func (c *rpcClient) Doctor() (DoctorReport, error) {
+	var report DoctorReport
+	if err := c.call("doctor", nil, &report); err != nil {
+		return DoctorReport{}, err
+	}
+	return report, nil
+}
+
+func (c *rpcClient) Repair(action string) ([]string, error) {
+	var lines []string
+	if err := c.call("repair", actionReq{Action: action}, &lines); err != nil {
+		return nil, err
+	}
+	return lines, nil
+}
+
+func (c *rpcClient) CloudflaredStatus() (ArtifactStatus, error) {
+	var status ArtifactStatus
+	if err := c.call("cloudflaredStatus", nil, &status); err != nil {
+		return ArtifactStatus{}, err
+	}
+	return status, nil
+}
+
+func (c *rpcClient) CheckUpdate(component string) (updateInfo, error) {
+	var info updateInfo
+	if err := c.call("checkUpdate", componentReq{Component: component}, &info); err != nil {
+		return updateInfo{}, err
+	}
+	return info, nil
+}
+
+func (c *rpcClient) ApplyUpdate(component string, force bool) (updateResult, error) {
+	var res updateResult
+	if err := c.call("applyUpdate", applyUpdateReq{Component: component, Force: force}, &res); err != nil {
 		return updateResult{}, err
 	}
 	return res, nil

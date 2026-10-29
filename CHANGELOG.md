@@ -2,12 +2,24 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
-## [Unreleased]
+## [1.3.6] - 2026-10-30
 
 ### 新增
 
 - **mihomo VLESS UDP（可选）**：新增 `UDP 转发` 设置开关、`UDP 空闲` 和 `UDP 会话上限`；默认关闭，只支持 mihomo 标准 VLESS UDP（`cmd=0x02`），不支持 XUDP/mux。
 - UDP 按每流独立 VLESS/WS 连接处理，使用已连接 UDP socket、64KB 缓冲和 32 个默认会话上限，避免 128MB VPS 内存和 fd 压力。
+- 统一资源管理：argoz / cloudflared 共用缓存、跨进程锁、SHA256/ELF 校验、原子安装、备份与失败冷却。
+- 事务化升级：下载超时与断点、替换前备份、替换后健康验证、失败回滚。
+- 自检与修复页：只读检查 daemon/RPC、二进制权限、配置、Alpine 依赖、内存、磁盘和端口；用户确认后执行有限修复。
+- 本体维护页：argoz 与 cloudflared 分开检查更新、升级、强制重装和查看版本/路径/缓存。
+- 低内存模式：总内存不超过 96MB 时自动降低并发、UDP 会话和 GC 目标。
+- 启动顺序修复：daemon 先启动 RPC/心跳，再初始化节点；环境检查后台执行。
+
+### 修复
+
+- **永久性 cloudflared 错误不再无限重试**：permission/ELF/segfault 归类为二进制致命错误，停止自动重试并提示修复；OOM 使用更长退避。
+- **Alpine 环境检查不再虚报成功**：逐包安装并验证实际文件，gcompat 或安装失败只告警。
+- **安装脚本幂等**：已有健康二进制时跳过下载，只有 `--force` 才强制重装。
 
 ### 说明
 
@@ -203,7 +215,8 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.5...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.6...HEAD
+[1.3.6]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.6
 [1.3.5]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.5
 [1.3.4]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.4
 [1.3.3]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.3
