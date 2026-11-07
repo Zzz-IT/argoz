@@ -68,11 +68,19 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           TAG="${TAG#v}"
-          awk -v tag="$TAG" '
-            $0 ~ ("^## \\[" tag "\\]") { f = 1; next }
-            f && /^## \[/ { exit }
-            f { print }
-          ' CHANGELOG.md > notes.md
+          # 优先精确匹配 `## [<tag>]`；找不到时回退到 `## [Unreleased]`，
+          # 避免版本号忘了落 CHANGELOG 时 release notes 变成空的默认文案。
+          extract() {
+            awk -v tag="$1" '
+              $0 ~ ("^## \\[" tag "\\]") { f = 1; next }
+              f && /^## \[/ { exit }
+              f { print }
+            ' CHANGELOG.md
+          }
+          extract "$TAG" > notes.md
+          if [ ! -s notes.md ]; then
+            extract "Unreleased" > notes.md
+          fi
           if [ ! -s notes.md ]; then
             echo "Release ${{ github.ref_name }}" > notes.md
           fi
