@@ -45,12 +45,17 @@ type Check struct {
 // Report 是完整自检报告。
 type Report struct {
 	// Healthy 仅在存在 error 级检查时为 false；warn 表示可运行但需要关注。
-	Healthy        bool    `json:"healthy"`
-	Checks         []Check `json:"checks"`
-	Summary        string  `json:"summary"`
-	MemTotalMB     int     `json:"mem_total_mb"`
-	MemAvailableMB int     `json:"mem_available_mb"`
-	LowMemory      bool    `json:"low_memory"`
+	Healthy         bool    `json:"healthy"`
+	Checks          []Check `json:"checks"`
+	Summary         string  `json:"summary"`
+	MemTotalMB      int     `json:"mem_total_mb"`
+	MemAvailableMB  int     `json:"mem_available_mb"`
+	LowMemory       bool    `json:"low_memory"`
+	CgroupMaxMB     int     `json:"cgroup_max_mb"` // 0 表示无限制或未知
+	CgroupCurrentMB int     `json:"cgroup_current_mb"`
+	OOMKills        int64   `json:"oom_kills"` // cgroup memory.events 累计
+	InodesFree      int64   `json:"inodes_free"`
+	InodesTotal     int64   `json:"inodes_total"`
 }
 
 const (
@@ -60,9 +65,17 @@ const (
 	repairEnv         = "env"
 	repairConfig      = "config"
 	repairAll         = "all"
+	repairOOMRecover  = "oom-recover"
 
 	diskWarnMB  = 100
 	diskErrorMB = 32
+
+	// inodeWarnInodes inode 可用数低于该阈值时告警；InodesTotal 为 0 表示未知不参与判定。
+	inodeWarnInodes = 4096
+	// cgroupLimitWarnPct cgroup 已用/上限超过该百分比时告警。
+	cgroupLimitWarnPct = 80
+	// egressProbeTimeout 出口连通性探测超时。
+	egressProbeTimeout = 3 * time.Second
 )
 
 // Run 执行一次纯只读自检。dataDir 为空时优先使用 cfg.Dir()。
@@ -84,20 +97,32 @@ func Run(dataDir string, cfg *config.Config) Report {
 		checkMemory(mem, cfg),
 		checkDisk(dir),
 		checkNodePorts(cfg),
+		checkCgroupLimit(mem),
+		checkOOMEvents(mem),
+		checkInodes(mem),
+		checkEgress(),
 	)
 
 	healthy, summary := summarise(checks)
-	low := mem.Known && mem.TotalMB <= config.LowMemoryThresholdMB
-	if cfg != nil && cfg.Settings.EffectiveLowMemory(mem.TotalMB) {
+	// 低内存按有效内存上限判定（cgroup 优先），与运行时 ConfigureMemory 保持一致，
+	// 否则容器被限到 64MB 时自检会说「内存充足」而实际已启用低内存模式。
+	limitMB := mem.EffectiveLimitMB()
+	low := mem.Known && limitMB > 0 && limitMB <= config.LowMemoryThresholdMB
+	if cfg != nil && cfg.Settings.EffectiveLowMemory(limitMB) {
 		low = true
 	}
 	return Report{
-		Healthy:        healthy,
-		Checks:         checks,
-		Summary:        summary,
-		MemTotalMB:     mem.TotalMB,
-		MemAvailableMB: mem.AvailableMB,
-		LowMemory:      low,
+		Healthy:         healthy,
+		Checks:          checks,
+		Summary:         summary,
+		MemTotalMB:      mem.TotalMB,
+		MemAvailableMB:  mem.AvailableMB,
+		LowMemory:       low,
+		CgroupMaxMB:     int(mem.CgroupMaxMB),
+		CgroupCurrentMB: int(mem.CgroupCurrentMB),
+		OOMKills:        mem.OOMKills,
+		InodesFree:      mem.InodesFree,
+		InodesTotal:     mem.InodesTotal,
 	}
 }
 
@@ -542,41 +567,43 @@ func doctorLoaderPath() string {
 }
 
 type memoryInfo struct {
-	TotalMB     int
-	AvailableMB int
-	Known       bool
+	TotalMB         int
+	AvailableMB     int
+	Known           bool
+	CgroupMaxMB     int
+	CgroupCurrentMB int
+	OOMKills        int64
+	InodesFree      int64
+	InodesTotal     int64
 }
 
+// EffectiveLimitMB 返回用于低内存判定的有效内存上限（MB）：cgroup 上限优先，
+// 与 config.detectTotalMemoryMB / sys.MemInfo.EffectiveLimitMB 同一口径。
+// 容器被限制到 64MB 而宿主有 16GB 时应按 64MB 判定，否则低内存模式永不触发。
+func (m memoryInfo) EffectiveLimitMB() int {
+	if m.CgroupMaxMB > 0 {
+		return m.CgroupMaxMB
+	}
+	return m.TotalMB
+}
+
+// readMemoryInfo 读取 /proc/meminfo、cgroup 与 statfs 信息。
+// 保留现有 Known/TotalMB/AvailableMB 语义不动，只在有 sys 可用时补齐 cgroup/inode 字段。
 func readMemoryInfo() memoryInfo {
-	if runtime.GOOS != "linux" {
-		return memoryInfo{}
+	info := sys.ReadMemInfo()
+	out := memoryInfo{
+		TotalMB:         info.TotalMB,
+		AvailableMB:     info.AvailableMB,
+		CgroupMaxMB:     info.CgroupMaxMB,
+		CgroupCurrentMB: info.CgroupCurrentMB,
+		OOMKills:        info.OOMKills,
+		InodesFree:      info.InodesFree,
+		InodesTotal:     info.InodesTotal,
 	}
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return memoryInfo{}
-	}
-	values := make(map[string]int)
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		key := strings.TrimSuffix(fields[0], ":")
-		kb, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil || kb < 0 {
-			continue
-		}
-		values[key] = int(kb / 1024)
-	}
-	total, ok := values["MemTotal"]
-	if !ok || total <= 0 {
-		return memoryInfo{}
-	}
-	available, ok := values["MemAvailable"]
-	if !ok {
-		available = values["MemFree"]
-	}
-	return memoryInfo{TotalMB: total, AvailableMB: available, Known: true}
+	// Known 沿用 sys.MemInfo.WithDerived 的口径：cgroup 数据也算已知，
+	// 否则纯 cgroup 环境（读不到 /proc/meminfo）会被误判为「无法读取内存」。
+	out.Known = info.Known
+	return out
 }
 
 func checkMemory(mem memoryInfo, cfg *config.Config) Check {
@@ -588,14 +615,18 @@ func checkMemory(mem memoryInfo, cfg *config.Config) Check {
 		}
 	}
 	detail := fmt.Sprintf("总内存 %d MB，可用 %d MB", mem.TotalMB, mem.AvailableMB)
+	if mem.CgroupMaxMB > 0 {
+		detail += fmt.Sprintf("，cgroup 上限 %d MB（当前 %d MB）", mem.CgroupMaxMB, mem.CgroupCurrentMB)
+	}
 	if cfg != nil {
 		detail += "，MemoryMode=" + config.NormalizeMemoryMode(cfg.Settings.MemoryMode)
 	}
-	if mem.TotalMB <= config.LowMemoryThresholdMB {
+	// 用有效上限（cgroup 优先）判低内存，而不是裸 TotalMB，避免容器里误判。
+	if limit := mem.EffectiveLimitMB(); limit > 0 && limit <= config.LowMemoryThresholdMB {
 		return Check{
 			Name:   "内存",
 			Status: StatusWarn,
-			Detail: detail + fmt.Sprintf("；总内存不超过 %d MB，建议低内存模式", config.LowMemoryThresholdMB),
+			Detail: detail + fmt.Sprintf("；有效内存上限 %d MB 不超过 %d MB，建议低内存模式", limit, config.LowMemoryThresholdMB),
 		}
 	}
 	if mem.AvailableMB > 0 && mem.AvailableMB < 32 {
@@ -667,6 +698,97 @@ func checkNodePorts(cfg *config.Config) Check {
 		Name:   "节点端口监听",
 		Status: StatusWarn,
 		Detail: strings.Join(details, "；"),
+	}
+}
+
+// checkCgroupLimit 检查 cgroup 内存上限与当前用量：提示生效上限，接近上限时告警。
+// 无 cgroup 限制（CgroupMaxMB=0）时提示未设置上限。
+func checkCgroupLimit(mem memoryInfo) Check {
+	if mem.CgroupMaxMB <= 0 {
+		return Check{
+			Name:   "cgroup 内存限制",
+			Status: StatusOK,
+			Detail: "未设置 cgroup 内存上限（按宿主内存使用）",
+		}
+	}
+	used := mem.CgroupCurrentMB
+	pct := 0
+	if mem.CgroupMaxMB > 0 {
+		pct = used * 100 / mem.CgroupMaxMB
+	}
+	detail := fmt.Sprintf("生效上限 %d MB，当前用量 %d MB（%d%%）", mem.CgroupMaxMB, used, pct)
+	switch {
+	case pct >= cgroupLimitWarnPct:
+		return Check{
+			Name:   "cgroup 内存限制",
+			Status: StatusWarn,
+			Detail: detail + "；接近 cgroup 上限，建议降低负载",
+			Repair: repairOOMRecover,
+		}
+	default:
+		return Check{Name: "cgroup 内存限制", Status: StatusOK, Detail: detail}
+	}
+}
+
+// checkOOMEvents 检查 cgroup oom_kill 累计：>0 时告警，说明累计次数。
+func checkOOMEvents(mem memoryInfo) Check {
+	if mem.OOMKills <= 0 {
+		return Check{Name: "OOM 事件", Status: StatusOK, Detail: "未检测到 cgroup OOM 事件"}
+	}
+	return Check{
+		Name:   "OOM 事件",
+		Status: StatusWarn,
+		Detail: fmt.Sprintf("cgroup oom_kill 累计 %d 次，建议执行 OOM 后降低负载", mem.OOMKills),
+		Repair: repairOOMRecover,
+	}
+}
+
+// checkInodes 检查磁盘 inode 剩余量：低于阈值时告警，参考 checkDisk 的阈值风格。
+func checkInodes(mem memoryInfo) Check {
+	if mem.InodesTotal <= 0 && mem.InodesFree <= 0 {
+		return Check{
+			Name:   "磁盘 inode",
+			Status: StatusWarn,
+			Detail: "无法统计 inode 使用情况（平台不支持或文件系统未返回）",
+		}
+	}
+	detail := fmt.Sprintf("可用 inode %d / 总 %d", mem.InodesFree, mem.InodesTotal)
+	if mem.InodesFree > 0 && mem.InodesFree < inodeWarnInodes {
+		return Check{Name: "磁盘 inode", Status: StatusWarn, Detail: detail + "；inode 偏低，可能无法创建新文件"}
+	}
+	return Check{Name: "磁盘 inode", Status: StatusOK, Detail: detail}
+}
+
+// checkEgress 做一个轻量的出口连通性探测：连接一个公网 DNS 的 53 端口即可。
+// 不引入第三方依赖，超时/失败时降级为 warn 而不是 panic，因为离线环境很常见。
+func checkEgress() Check {
+	deadline := time.Now().Add(egressProbeTimeout)
+	addrs := []string{
+		"1.1.1.1:53",
+		"8.8.8.8:53",
+		"[2001:4860:4860::8888]:53",
+	}
+	var lastErr error
+	for _, addr := range addrs {
+		remain := time.Until(deadline)
+		if remain <= 0 {
+			break
+		}
+		conn, err := net.DialTimeout("tcp", addr, remain)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_ = conn.Close()
+		return Check{Name: "出口连通性", Status: StatusOK, Detail: "可连接公共 DNS " + addr}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("无可用探测地址")
+	}
+	return Check{
+		Name:   "出口连通性",
+		Status: StatusWarn,
+		Detail: fmt.Sprintf("无法连接公共 DNS（可能离线或防火墙拦截）: %v", lastErr),
 	}
 }
 

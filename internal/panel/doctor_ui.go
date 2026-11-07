@@ -247,6 +247,8 @@ func doctorRepairLabel(action string) string {
 		return "修复配置目录/文件"
 	case "all":
 		return "执行安全本地修复"
+	case "oom-recover":
+		return "OOM 后降低负载"
 	default:
 		return action
 	}
@@ -254,7 +256,7 @@ func doctorRepairLabel(action string) string {
 
 func doctorRepairSupported(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "chmod", "cloudflared", "locks", "env", "config", "all":
+	case "chmod", "cloudflared", "locks", "env", "config", "all", "oom-recover":
 		return true
 	default:
 		return false

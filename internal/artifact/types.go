@@ -198,6 +198,7 @@ type ValidateOptions struct {
 	MinSize         int64
 	MaxSize         int64
 	SHA256          string
+	SkipHash        bool // SkipHash 为真且 SHA256 非空时跳过全文件重算哈希，复用已知值以省一次全文件读
 	RunVersion      bool
 	VersionArgs     []string
 	VersionContains string

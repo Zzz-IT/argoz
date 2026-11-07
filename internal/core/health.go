@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,7 +30,32 @@ const (
 	runtimeEvery  = 5 * time.Minute  // L4 采样间隔
 	runtimeWindow = 15 * time.Minute // L4 观察窗口
 	leakThreshold = 200              // L4 goroutine/fd 增长阈值
+
+	// 低内存模式下的探针降频倍数：L1 每 2×15s 一次（30s），L3 busy/idle/sweep 各 4×稀疏。
+	// 目的是让探针本身不成为内存/CPU 压力来源，同时保持 L1/L3 判定语义不变。
+	lowMemL1Scale = 2
+	lowMemL3Scale = 4
 )
+
+// probeIntervalL1 返回 L1 探针周期：低内存时放大 2 倍，正常保持 l1Interval。
+func probeIntervalL1() time.Duration {
+	if LowMemoryActive() {
+		return l1Interval * lowMemL1Scale
+	}
+	return l1Interval
+}
+
+// lowMemEvery 对探针轮次计数模数进行低内存放大：返回放大后的模数。
+// 调用方仍按 n%probeEveryXxx(…) 判定触发时机，只是低内存时更稀疏。
+func lowMemEvery(base int) int {
+	if LowMemoryActive() {
+		if base <= 0 {
+			return 1
+		}
+		return base * lowMemL3Scale
+	}
+	return base
+}
 
 // healthState 探针计数器
 type healthState struct {
@@ -137,11 +163,20 @@ func probeL3(domain, path string, timeout time.Duration) error {
 
 // ---------- 探针调度 ----------
 
+// oomEngineHookRegistered 保证 OOM 降级引擎钩子只注册一次，StartHealth 多次调用不会叠加。
+var oomEngineHookRegistered atomic.Bool
+
 func (e *Engine) StartHealth() {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.mu.Lock()
 	e.cancel = cancel
 	e.mu.Unlock()
+
+	// 首次 StartHealth 时注册引擎级 UDP 清理钩子；RegisterOOMDegradeEngine 是覆盖式写入，
+	// 但用 once 语义避免多次 StartHealth 重复构造闭包带来的无谓开销。
+	if oomEngineHookRegistered.CompareAndSwap(false, true) {
+		RegisterOOMDegradeEngine(e)
+	}
 
 	go e.probeLoop(ctx)
 	go e.runtimeLoop(ctx)
@@ -157,7 +192,7 @@ func (e *Engine) StopHealth() {
 }
 
 func (e *Engine) probeLoop(ctx context.Context) {
-	t := time.NewTicker(l1Interval)
+	t := time.NewTicker(probeIntervalL1())
 	defer t.Stop()
 
 	n := 0
@@ -171,13 +206,17 @@ func (e *Engine) probeLoop(ctx context.Context) {
 		n++
 		e.probeRound(true, false, true) // L1 每轮都做
 
+		sweepN := lowMemEvery(sweepEvery)
+		l3IdleN := lowMemEvery(l3IdleEvery)
+		l3BusyN := lowMemEvery(l3BusyEvery)
+
 		switch {
-		case n%sweepEvery == 0:
+		case n%sweepN == 0:
 			e.probeRound(false, true, true)
 			LogInfo("每小时全量巡检完成（%d 个节点）", len(e.Statuses()))
-		case n%l3IdleEvery == 0:
+		case n%l3IdleN == 0:
 			e.probeRound(false, true, false)
-		case n%l3BusyEvery == 0:
+		case n%l3BusyN == 0:
 			e.probeRound(false, true, true)
 		}
 	}
@@ -296,6 +335,11 @@ func (e *Engine) runtimeLoop(ctx context.Context) {
 		}
 
 		s := runtimeSample{at: time.Now(), gor: runtime.NumGoroutine(), fd: countFDs()}
+
+		// OOM 事件驱动降级：cgroup oom_kill 计数增长时立即切换低内存策略并关闭 UDP 会话。
+		if actions := OOMDegrade(); len(actions) > 0 {
+			LogWarn("runtimeLoop 触发 OOM 降级：%s", strings.Join(actions, "；"))
+		}
 
 		cutoff := time.Now().Add(-runtimeWindow)
 		kept := samples[:0]

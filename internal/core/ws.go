@@ -30,9 +30,19 @@ const (
 const (
 	// maxWSFrameSize 限制单帧大小。relay 使用 16KB 缓冲，正常客户端远小于该值，
 	// 但必须防止异常长度把一条连接拖死或触发整数溢出。
-	maxWSFrameSize = 1 << 20 // 1 MiB
-	wsWriteTimeout = 30 * time.Second
+	// maxWSFrameSizeLow 为低内存档位，进一步收紧到 256KB。
+	maxWSFrameSize    = 1 << 20   // 1 MiB
+	maxWSFrameSizeLow = 256 << 10 // 256 KiB
+	wsWriteTimeout    = 30 * time.Second
 )
+
+// maxWSFrameSizeNow 返回当前档位的单帧上限；低内存时收紧到 256KB。
+func maxWSFrameSizeNow() int {
+	if LowMemoryActive() {
+		return maxWSFrameSizeLow
+	}
+	return maxWSFrameSize
+}
 
 var (
 	errWSClosed   = errors.New("websocket 已关闭")
@@ -188,12 +198,12 @@ func (c *wsConn) readFrameHeader() (byte, int64, error) {
 			return 0, 0, err
 		}
 		u := binary.BigEndian.Uint64(b[:])
-		if u > uint64(maxWSFrameSize) {
+		if u > uint64(maxWSFrameSizeNow()) {
 			return 0, 0, fmt.Errorf("%w: 帧长度 %d 超过上限", errWSProtocol, u)
 		}
 		plen = int64(u)
 	}
-	if plen < 0 || plen > maxWSFrameSize {
+	if plen < 0 || plen > int64(maxWSFrameSizeNow()) {
 		return 0, 0, fmt.Errorf("%w: 帧长度非法 %d", errWSProtocol, plen)
 	}
 
@@ -326,7 +336,7 @@ func (c *wsConn) writeFrame(op byte, payload []byte) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 
-	if len(payload) > maxWSFrameSize {
+	if len(payload) > maxWSFrameSizeNow() {
 		return fmt.Errorf("%w: 发送帧过大", errWSProtocol)
 	}
 

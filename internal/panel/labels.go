@@ -58,9 +58,7 @@ func boolText(b bool) string {
 
 // durationText 时长中文化
 func durationText(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
+	d = max(d, 0)
 	switch {
 	case d < time.Second:
 		return "刚刚"

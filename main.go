@@ -92,6 +92,7 @@ func runDaemon(dir string) {
 	defer logx.CloseLog()
 
 	cfg.Settings = core.ConfigureMemory(cfg.Settings)
+	logx.SetLowMemory(core.LowMemoryActive())
 
 	e := core.NewEngine(cfg, cfg.Dir())
 	e.SetDaemon(true)

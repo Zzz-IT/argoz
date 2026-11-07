@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"argoz/internal/artifact"
+	"argoz/internal/xutil"
 )
 
 var domainRe = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
@@ -147,12 +148,7 @@ func classifyTunnelFailure(err error) tunnelFailureKind {
 }
 
 func oomRetryDelay(n int) time.Duration {
-	if n < 1 {
-		n = 1
-	}
-	if n > 4 {
-		n = 4
-	}
+	n = xutil.ClampInt(n, 1, 4)
 	d := 3 * time.Minute
 	for i := 1; i < n; i++ {
 		d *= 2
@@ -340,6 +336,8 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 
 	cmd := commandContext(ctx, bin, args...)
 	cmd.SysProcAttr = ChildDeathAttr()
+	// 自成独立进程组，配合 orphan_linux.go 的进程组 kill 清理孤儿。
+	setProcessGroup(cmd)
 	pr, pw := io.Pipe()
 	defer pr.Close()
 	cmd.Stdout = pw
@@ -385,7 +383,9 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	}()
 
 	sc := bufio.NewScanner(pr)
-	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	// 低内存时收紧扫描缓冲，正常档保持 64KB/1MB。
+	initSz, maxSz := tunnelScanInitBuf(), tunnelScanMaxBuf()
+	sc.Buffer(make([]byte, initSz), maxSz)
 
 	var tail []string
 	for sc.Scan() {
@@ -394,7 +394,7 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 			continue
 		}
 		tail = append(tail, line)
-		if len(tail) > 40 {
+		if len(tail) > 20 {
 			tail = tail[1:]
 		}
 
@@ -467,6 +467,22 @@ func tunnelArgs(n Node) ([]string, error) {
 		return []string{"--no-autoupdate", "tunnel", "run", "--token", token}, nil
 	}
 	return []string{"--no-autoupdate", "tunnel", "--url", fmt.Sprintf("http://127.0.0.1:%d", n.Port)}, nil
+}
+
+// tunnelScanInitBuf 返回 cloudflared 日志扫描缓冲初始长度；低内存时降为 16KB。
+func tunnelScanInitBuf() int {
+	if LowMemoryActive() {
+		return 16 << 10
+	}
+	return 64 << 10
+}
+
+// tunnelScanMaxBuf 返回 cloudflared 日志扫描缓冲上限；低内存时降为 256KB。
+func tunnelScanMaxBuf() int {
+	if LowMemoryActive() {
+		return 256 << 10
+	}
+	return 1 << 20
 }
 
 // summariseCloudflared 从输出尾部挑一行最有诊断价值的错误

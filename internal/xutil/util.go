@@ -11,6 +11,21 @@ import (
 	"time"
 )
 
+// ClampInt 把 n 限制在 [lo, hi] 区间内；lo > hi 时返回 lo。
+// 用来替代散落的「if x < lo { x = lo }; if x > hi { x = hi }」手写夹取，语义一眼可见。
+func ClampInt(n, lo, hi int) int {
+	if lo > hi {
+		return lo
+	}
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
+	return n
+}
+
 // randHex 生成 n 字节随机数的十六进制串（2n 个字符）
 func RandHex(n int) string {
 	b := make([]byte, n)

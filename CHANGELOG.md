@@ -2,6 +2,34 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [Unreleased]
+
+### 新增
+
+- **cgroup 内存感知**：`internal/sys` 新增 `MemInfo` / `ReadMemInfo`，覆盖 cgroup v1 + v2 与非 Linux 兜底。读取 `memory.max` / `memory.current` / `memory.events`（`oom_kill` 累计）与 statfs inode 信息，`EffectiveLimitMB()` / `EffectiveAvailableMB()` 给出「有效内存上限」而非裸 MemTotal——容器被限到 64MB 而宿主 16GB 时也能正确判定低内存。
+- **低内存判定按 cgroup 上限优先**：`config.detectTotalMemoryMB` 与 `doctor` 自检都改用有效上限，避免容器里自检说「内存充足」但实际已启用低内存模式。
+- **自检新增 4 个检查项**：cgroup 内存限制（用量 ≥80% 告警）、OOM 事件（`oom_kill` 累计 >0 告警）、磁盘 inode（可用 <4096 告警）、出口连通性（探测公共 DNS:53，离线降级为 warn 不影响 Healthy）。`DoctorReport` 新增 `cgroup_max_mb` / `cgroup_current_mb` / `oom_kills` / `inodes_free` / `inodes_total` 五个字段。
+- **`oom-recover` 修复动作**：面板识别该动作并给出中文映射「OOM 后降低负载」；`core.Repair` 实现为调用 `OOMDegrade()` 生成动作清单，无 OOM 事件时也返回可见反馈。
+- **OOM 事件驱动降级**：`runtimeLoop` 周期调用 `OOMDegrade()`，`oom_kill` 增长时切换低内存策略并关闭各节点 UDP 会话。`StartHealth` 幂等注册引擎级 UDP 清理钩子。
+- **Go 1.27**：`go.mod` 从 `go 1.22` 提到 `go 1.27`，CI / Release workflow 同步到 `go-version: '1.27'`。
+
+### 优化
+
+- **GC 堆上限按 cgroup 推导**：低内存模式下 `debug.SetMemoryLimit` / `GOMEMLIMIT` 从固定 40MB/32MiB 改为有效内存上限的 75%（夹到 16–512 MiB），避免小容器顶到 cgroup 上限被 OOM kill、大容器过度约束 GC。`GOGC=50` 不变。
+- **热路径减负（低内存档位）**：WS relay 缓冲 16KB→4KB、WS 帧上限 1MB→256KB、cloudflared 日志扫描缓冲 64KB/1MB→16KB/256KB、tail 行数 40→20、UDP 读缓冲 64KB→4KB、UDP socket 读写缓冲 64KB→16KB。缓冲池按档位分池，旧长度 buffer 自然淘汰不混池。
+- **连接准入**：`ServeHTTP` 建连前调 `ConnectionBudgetOK`，低内存超预算时返回 503 并保留已有连接。
+- **UDP `touch` 时间戳粗化**：距上次写 >1s 才更新，减少热路径原子写争用；idle 回收最多延迟 1s，可接受。
+- **探针降频**：低内存模式下 L1 间隔放大 2 倍（15s→30s）、L3/sweep 轮次模数放大 4 倍，探针本身不成为内存/CPU 压力来源；L1/L3 判定语义不变。
+- **`artifact.SkipHash`**：调用方已知 SHA256 时跳过全文件重算，直接复用已知哈希；未知哈希仍走全文件校验，不改变默认行为。
+- **日志轻量化**：`logx.SetLowMemory` 低内存时轮转阈值 5MB→1MB；写入行改惰性拼接，文件不可写或等级被过滤时不产生额外字符串分配。
+
+### 修复
+
+- **supervisor 崩溃退避**：稳定运行 ≥1min 视为健康、清零计数并复位 1s 退避；连续秒退按 2s→5s→15s→30s 拉长，避免刷屏与反复抢锁。
+- **孤儿进程组清理**：`terminatePID` 改为对进程组发信号（`Kill(-pid)`），配合 `setProcessGroup` 让 cloudflared 自成进程组，避免只杀主进程留下孙进程继续占隧道端口。
+- **heartbeat 低内存不漏写**：心跳写入失败或检测到 OOM 时打告警但**仍然继续写**，避免 `HeartbeatStale` 误判 daemon 死亡触发 supervisor 重启风暴。
+- **`config_test.go` 格式串笔误**：两处 `Fatalf` 的 `%v` 被写成 `%<tab>v`，`go vet` 报 unknown verb，CI 会红。
+
 ## [1.3.6] - 2026-10-30
 
 ### 新增

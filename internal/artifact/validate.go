@@ -88,13 +88,20 @@ func Inspect(ctx context.Context, path string, opts ValidateOptions) (Info, erro
 		}
 	}
 
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return info, binaryErr(path, BinaryIO, "计算 SHA256 失败", err)
-	}
-	info.SHA256 = hex.EncodeToString(h.Sum(nil))
-	if want := strings.ToLower(strings.TrimSpace(opts.SHA256)); want != "" && want != info.SHA256 {
-		return info, binaryErr(path, BinaryCorrupt, fmt.Sprintf("SHA256 不匹配: got %s want %s", info.SHA256, want), nil)
+	want := strings.ToLower(strings.TrimSpace(opts.SHA256))
+	if opts.SkipHash && want != "" {
+		// 调用方已知目标文件 SHA256（如流式下载时已算过并校验），
+		// 跳过全文件重读重算，直接复用已知哈希；未知哈希时仍走下方全文件校验。
+		info.SHA256 = want
+	} else {
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			return info, binaryErr(path, BinaryIO, "计算 SHA256 失败", err)
+		}
+		info.SHA256 = hex.EncodeToString(h.Sum(nil))
+		if want != "" && want != info.SHA256 {
+			return info, binaryErr(path, BinaryCorrupt, fmt.Sprintf("SHA256 不匹配: got %s want %s", info.SHA256, want), nil)
+		}
 	}
 
 	if opts.RunVersion {

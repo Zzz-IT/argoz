@@ -138,6 +138,12 @@ func (rt *nodeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "low memory", http.StatusServiceUnavailable)
 		return
 	}
+	// 低内存模式下按可用内存预算做准入判断，超预算时拒绝新连接。
+	if !ConnectionBudgetOK(rt.conns.Load()) {
+		LogDebug("连接预算已满，拒绝新连接（当前活跃 %d）", rt.conns.Load())
+		http.Error(w, "busy", http.StatusServiceUnavailable)
+		return
+	}
 
 	// 先原子预占名额，避免并发握手同时通过 Load 检查。
 	maxConns := settings.MaxConns
@@ -321,18 +327,55 @@ loop:
 	return sUp.Load(), sDown.Load()
 }
 
-// relayBufSize 单会话单方向中继缓冲；16KB 在吞吐与内存间取平衡
-const relayBufSize = 16 << 10
+// relayBufSize 单会话单方向中继缓冲；16KB 在吞吐与内存间取平衡。
+// relayBufSizeLow 为低内存档位，避免 24 路连接×双向缓冲把 64MB 机器压到 OOM。
+// 两档长度不同，必须分池存放，否则池内 buffer 长度与当前档位不一致。
+const (
+	relayBufSize    = 16 << 10
+	relayBufSizeLow = 4 << 10
+)
 
-var relayBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, relayBufSize)
-		return &b
-	},
+// relayBufferSize 返回当前档位的中继缓冲长度；低内存时降为 4KB。
+func relayBufferSize() int {
+	if LowMemoryActive() {
+		return relayBufSizeLow
+	}
+	return relayBufSize
 }
 
-func getRelayBuf() *[]byte  { return relayBufPool.Get().(*[]byte) }
-func putRelayBuf(b *[]byte) { relayBufPool.Put(b) }
+// relayBufPools 按长度分池：低内存切换后旧长度的 buffer 不会被混入新档位。
+var relayBufPools = map[int]*sync.Pool{
+	relayBufSize:    newRelayBufPool(relayBufSize),
+	relayBufSizeLow: newRelayBufPool(relayBufSizeLow),
+}
+
+func newRelayBufPool(size int) *sync.Pool {
+	return &sync.Pool{New: func() any {
+		b := make([]byte, size)
+		return &b
+	}}
+}
+
+// getRelayBuf 取当前档位的中继缓冲；长度与档位不符时重新分配（不混池）。
+func getRelayBuf() *[]byte {
+	size := relayBufferSize()
+	b := relayBufPools[size].Get().(*[]byte)
+	if len(*b) != size {
+		buf := make([]byte, size)
+		return &buf
+	}
+	return b
+}
+
+// putRelayBuf 归还中继缓冲；只回收到同长度的池。
+func putRelayBuf(b *[]byte) {
+	if b == nil || len(*b) == 0 {
+		return
+	}
+	if p := relayBufPools[len(*b)]; p != nil {
+		p.Put(b)
+	}
+}
 
 type countWriter struct {
 	w io.Writer

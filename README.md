@@ -203,6 +203,8 @@ L5 外部守护  systemd Restart=always / OpenRC supervise-daemon
 
 - **永久性错误**（1033 / tunnel not found / Token 无效）第 2 次起直接转 60 分钟重试
 - **每小时全量巡检**：所有节点重跑 L1 + L3，纠正状态机漂移
+- **崩溃退避**：daemon 稳定运行 ≥1min 视为健康、退避复位到 1s；连续秒退按 2s→5s→15s→30s 拉长重启间隔，避免配置损坏 / OOM / 二进制错误时刷屏与反复抢锁
+- **进程组清理**：cloudflared 自成独立进程组（`Setpgid`），孤儿清理对进程组发信号（`Kill(-pid)`），避免只杀主进程留下孙进程继续占隧道端口
 
 ## 日志
 
@@ -302,12 +304,17 @@ argoz update --rollback
 
 ## 低内存模式
 
-`MemoryMode=auto` 在总内存 ≤96MB 时自动启用低内存基线：
+`MemoryMode=auto` 在**有效内存上限**（cgroup `memory.max` 优先，无上限时回落到 `/proc/meminfo` 的 `MemTotal`）≤ 96MB 时自动启用低内存基线。容器被限到 64MB 而宿主 16GB 时同样会触发。
 
 - 默认并发上限 24、UDP 会话上限 8，UDP 仍默认关闭；
-- 运行期设置 Go `GOGC=50` / `GOMEMLIMIT=40MiB`，cloudflared 子进程继承更低的 Go 内存目标；
+- 运行期设置 Go `GOGC=50`，`GOMEMLIMIT` / `debug.SetMemoryLimit` 取有效上限的 75%（夹到 16–512 MiB），cloudflared 子进程继承同样的 Go 内存目标；
 - 可用内存低于 16MB 时拒绝新 WS 会话（503），优先保护已有连接；
+- WS relay 缓冲降到 4KB、WS 帧上限 256KB、UDP 读缓冲 4KB、UDP socket 读写缓冲 16KB、cloudflared 日志扫描缓冲 16KB/256KB、tail 20 行；
+- L1 探针间隔放大 2 倍、L3/全量巡检轮次放大 4 倍，探针本身不成为压力来源；
+- 日志轮转阈值 5MB → 1MB；
 - 不后台预下载资源；安装脚本和面板只在缺失/损坏或用户确认时下载。
+
+cgroup `oom_kill` 累计增长时会触发 OOM 降级：切换低内存策略并关闭各节点 UDP 会话；心跳文件始终继续写入，避免 supervisor 误判 daemon 死亡形成重启风暴。自检页会显示 cgroup 上限、当前用量、OOM 累计与 inode 余量，并提供 `oom-recover` 修复动作。
 
 可用 `auto / low / normal` 手动覆盖；64MB 机器建议 `low`，并只运行 1 个节点。
 
@@ -320,7 +327,7 @@ argoz update --rollback
 | CentOS / RHEL / Rocky 8+ | systemd |
 | 无 systemd / OpenRC | 手动 nohup 或 crontab @reboot |
 
-二进制以 `CGO_ENABLED=0` 静态编译；构建需 **Go 1.22+**，无任何第三方依赖。
+二进制以 `CGO_ENABLED=0` 静态编译；构建需 **Go 1.27+**，无任何第三方依赖。
 
 ## 从源码构建
 

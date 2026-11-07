@@ -99,15 +99,20 @@ func readProcArgs(pid int) ([]string, error) {
 }
 
 func terminatePID(pid int) bool {
+	// 对进程组发信号，尽量把 cloudflared 派生的子进程一并清理，
+	// 避免只杀主进程留下孙进程继续占用隧道端口。
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return false
 	}
 	for i := 0; i < 20; i++ {
 		if !pidAlive(pid) {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
 			return true
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
 	_ = syscall.Kill(pid, syscall.SIGKILL)
 	return true
 }

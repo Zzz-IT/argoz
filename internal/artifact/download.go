@@ -166,6 +166,7 @@ func (m *Manager) downloadAttempt(ctx context.Context, client *http.Client, spec
 		MinSize:         spec.MinSize,
 		MaxSize:         spec.MaxSize,
 		SHA256:          wantHash,
+		SkipHash:        wantHash != "",
 		RunVersion:      opts.ValidateVersion,
 		VersionArgs:     opts.VersionArgs,
 		VersionContains: opts.VersionContains,

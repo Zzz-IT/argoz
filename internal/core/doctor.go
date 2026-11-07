@@ -22,12 +22,17 @@ func (e *Engine) Doctor() (DoctorReport, error) {
 
 	report := doctor.Run(e.dataDir, cfg)
 	out := DoctorReport{
-		Healthy:        report.Healthy,
-		Summary:        report.Summary,
-		MemTotalMB:     report.MemTotalMB,
-		MemAvailableMB: report.MemAvailableMB,
-		LowMemory:      report.LowMemory,
-		Checks:         make([]DoctorCheck, 0, len(report.Checks)),
+		Healthy:         report.Healthy,
+		Summary:         report.Summary,
+		MemTotalMB:      report.MemTotalMB,
+		MemAvailableMB:  report.MemAvailableMB,
+		LowMemory:       report.LowMemory,
+		CgroupMaxMB:     report.CgroupMaxMB,
+		CgroupCurrentMB: report.CgroupCurrentMB,
+		OOMKills:        report.OOMKills,
+		InodesFree:      report.InodesFree,
+		InodesTotal:     report.InodesTotal,
+		Checks:          make([]DoctorCheck, 0, len(report.Checks)),
 	}
 	for _, c := range report.Checks {
 		out.Checks = append(out.Checks, DoctorCheck{
@@ -66,6 +71,14 @@ func (e *Engine) Repair(action string) ([]string, error) {
 		lines = append(lines, e.repairPermissions()...)
 		lines = append(lines, e.repairLocks()...)
 		lines = append(lines, e.repairConfigDir()...)
+	case "oom-recover":
+		// OOM 后降低负载：调用 OOMDegrade 拿到动作清单；没有 OOM 事件时也要给用户可见反馈。
+		actions := OOMDegrade()
+		if len(actions) == 0 {
+			lines = append(lines, "未检测到 OOM 事件，无需降级")
+			break
+		}
+		lines = append(lines, actions...)
 	default:
 		return nil, fmt.Errorf("不支持的修复动作: %s", action)
 	}

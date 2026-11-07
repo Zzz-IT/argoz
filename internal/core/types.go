@@ -36,12 +36,17 @@ type DoctorCheck struct {
 
 // DoctorReport 自检汇总。
 type DoctorReport struct {
-	Healthy        bool          `json:"healthy"`
-	Checks         []DoctorCheck `json:"checks"`
-	Summary        string        `json:"summary"`
-	MemTotalMB     int           `json:"mem_total_mb"`
-	MemAvailableMB int           `json:"mem_available_mb"`
-	LowMemory      bool          `json:"low_memory"`
+	Healthy         bool          `json:"healthy"`
+	Checks          []DoctorCheck `json:"checks"`
+	Summary         string        `json:"summary"`
+	MemTotalMB      int           `json:"mem_total_mb"`
+	MemAvailableMB  int           `json:"mem_available_mb"`
+	LowMemory       bool          `json:"low_memory"`
+	CgroupMaxMB     int           `json:"cgroup_max_mb"` // 0 表示无限制或未知
+	CgroupCurrentMB int           `json:"cgroup_current_mb"`
+	OOMKills        int64         `json:"oom_kills"` // cgroup memory.events 累计
+	InodesFree      int64         `json:"inodes_free"`
+	InodesTotal     int64         `json:"inodes_total"`
 }
 
 // ArtifactStatus 二进制资源状态。

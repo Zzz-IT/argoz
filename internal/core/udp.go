@@ -12,14 +12,65 @@ import (
 
 const (
 	maxUDPPacket = 65507
-	udpBufSize   = 64 << 10
+	// udpBufSize 正常档单数据报缓冲/socket 缓冲；udpBufSizeLow 为低内存档位。
+	// 64KB 已足够容纳单个 UDP 数据报；不要设置 1MB，128MB VPS 会爆。
+	udpBufSize    = 64 << 10
+	udpBufSizeLow = 4 << 10
+	// udpSockBufLow 低内存档位的 socket SetReadBuffer/SetWriteBuffer。
+	udpSockBufLow = 16 << 10
 )
 
-var udpWritePool = sync.Pool{
-	New: func() any {
-		b := make([]byte, udpBufSize+2)
+// udpBufSizeNow 返回当前档位的数据报缓冲长度；低内存时降为 4KB。
+func udpBufSizeNow() int {
+	if LowMemoryActive() {
+		return udpBufSizeLow
+	}
+	return udpBufSize
+}
+
+// udpSockBufNow 返回当前档位的 socket 读写缓冲；低内存时降为 16KB。
+func udpSockBufNow() int {
+	if LowMemoryActive() {
+		return udpSockBufLow
+	}
+	return udpBufSize
+}
+
+// udpWritePools 按长度分池存放 [2B 长度][载荷] 打包缓冲，
+// 长度随 udpBufSize 档位变化，不同长度不混池（见 server.go 的 relay 池）。
+// getUDPPutBuf 会按需校验/放大，保证总能容纳 2+len(p)。
+var udpWritePools = map[int]*sync.Pool{
+	udpBufSize + 2:    newUDPWritePool(udpBufSize + 2),
+	udpBufSizeLow + 2: newUDPWritePool(udpBufSizeLow + 2),
+}
+
+func newUDPWritePool(size int) *sync.Pool {
+	return &sync.Pool{New: func() any {
+		b := make([]byte, size)
 		return &b
-	},
+	}}
+}
+
+// getUDPPutBuf 取可容纳 need 字节的打包缓冲；长度不足时重新分配（不混池）。
+func getUDPPutBuf(need int) *[]byte {
+	size := max(udpBufSizeNow()+2, need)
+	if p := udpWritePools[size]; p != nil {
+		if b := p.Get().(*[]byte); len(*b) >= need {
+			return b
+		}
+	}
+	b := make([]byte, size)
+	return &b
+}
+
+// putUDPPutBuf 归还打包缓冲；只回收到同长度的池。
+func putUDPPutBuf(b *[]byte) {
+	if b == nil || len(*b) == 0 {
+		return
+	}
+	if p := udpWritePools[len(*b)]; p != nil {
+		p.Put(b)
+	}
 }
 
 type udpSession struct {
@@ -28,7 +79,14 @@ type udpSession struct {
 }
 
 func (s *udpSession) touch() {
-	s.last.Store(time.Now().UnixNano())
+	// 粗化时间戳写入：收包热路径每次原子写会争用缓存行，
+	// 仅在距上次写入超过 1s 时才更新；idle 回收最多延迟 1s，可接受。
+	now := time.Now().UnixNano()
+	last := s.last.Load()
+	if last != 0 && now-last < int64(time.Second) {
+		return
+	}
+	s.last.Store(now)
 }
 
 func (s *udpSession) idleFor() time.Duration {
@@ -43,9 +101,7 @@ func (rt *nodeRuntime) acquireUDPSession(conn *net.UDPConn, max int) (*udpSessio
 	if max <= 0 {
 		max = 32
 	}
-	if max > 128 {
-		max = 128
-	}
+	max = min(max, 128)
 	rt.udpMu.Lock()
 	defer rt.udpMu.Unlock()
 	if rt.udpSessions == nil {
@@ -99,8 +155,9 @@ func (rt *nodeRuntime) serveUDP(ws *wsConn, target string, settings Settings) {
 	defer uc.Close()
 
 	// 64KB 已足够容纳单个 UDP 数据报；不要设置 1MB，128MB VPS 会爆。
-	_ = uc.SetReadBuffer(udpBufSize)
-	_ = uc.SetWriteBuffer(udpBufSize)
+	// 低内存时降到 16KB。
+	_ = uc.SetReadBuffer(udpSockBufNow())
+	_ = uc.SetWriteBuffer(udpSockBufNow())
 
 	s, ok := rt.acquireUDPSession(uc, settings.MaxUDPSessionsOrDefault())
 	if !ok {
@@ -159,7 +216,7 @@ func (rt *nodeRuntime) serveUDP(ws *wsConn, target string, settings Settings) {
 }
 
 func (rt *nodeRuntime) udpStreamToSocket(ws *wsConn, s *udpSession) {
-	buf := make([]byte, udpBufSize)
+	buf := make([]byte, udpBufSizeNow())
 	for {
 		p, err := readDatagram(ws, buf)
 		if err != nil {
@@ -179,7 +236,7 @@ func (rt *nodeRuntime) udpStreamToSocket(ws *wsConn, s *udpSession) {
 }
 
 func (rt *nodeRuntime) udpSocketToStream(ws *wsConn, s *udpSession) {
-	buf := make([]byte, udpBufSize)
+	buf := make([]byte, udpBufSizeNow())
 	for {
 		n, err := s.conn.Read(buf)
 		if err != nil {
@@ -221,11 +278,11 @@ func writeDatagram(w io.Writer, p []byte) error {
 	if len(p) > maxUDPPacket {
 		return fmt.Errorf("UDP 数据报过大: %d", len(p))
 	}
-	b := udpWritePool.Get().(*[]byte)
+	b := getUDPPutBuf(2 + len(p))
 	buf := (*b)[:2+len(p)]
 	binary.BigEndian.PutUint16(buf[:2], uint16(len(p)))
 	copy(buf[2:], p)
 	_, err := w.Write(buf)
-	udpWritePool.Put(b)
+	putUDPPutBuf(b)
 	return err
 }

@@ -32,10 +32,14 @@ func sdNotify(msg string) {
 	_, _ = c.Write([]byte(msg))
 }
 
-// StartHeartbeat 定期写心跳文件并上报 systemd watchdog，返回停止函数
+// StartHeartbeat 定期写心跳文件并上报 systemd watchdog，返回停止函数。
+// 低内存 / OOM 状态下仍然必须写心跳文件：否则 HeartbeatStale 会误判 daemon 死亡，
+// 触发 supervisor 重启形成重启风暴；只做观测 + 告警，不触发任何降级副作用。
 func StartHeartbeat(dir string) func() {
 	path := HeartbeatPath(dir)
 	sdNotify("READY=1")
+
+	var lastOOMKills int64 = -1
 
 	stop := make(chan struct{})
 	go func() {
@@ -43,8 +47,21 @@ func StartHeartbeat(dir string) func() {
 		defer t.Stop()
 		for {
 			ts := strconv.FormatInt(time.Now().UnixNano(), 10) + "\n"
-			_ = atomicWrite(path, []byte(ts), 0o600)
+			// 心跳写入不能因为内存紧张而跳过；写失败时记录告警，但仍继续下一轮。
+			if err := atomicWrite(path, []byte(ts), 0o600); err != nil {
+				LogWarn("心跳文件写入失败（daemon 仍需保持运行）: %v", err)
+			}
 			sdNotify("WATCHDOG=1")
+
+			// 仅观测 cgroup oom_kill 变化，用于告警；不在此处触发降级副作用（那是 runtimeLoop 的职责）。
+			if info := CurrentMemInfo(); info.OOMKills != lastOOMKills {
+				if lastOOMKills >= 0 && info.OOMKills > lastOOMKills {
+					LogWarn("检测到 cgroup OOM 事件（oom_kill %d -> %d），心跳仍持续写入以避免 supervisor 误重启",
+						lastOOMKills, info.OOMKills)
+				}
+				lastOOMKills = info.OOMKills
+			}
+
 			select {
 			case <-stop:
 				return

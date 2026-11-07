@@ -31,7 +31,19 @@ const (
 	LevelOff // 完全静音（全屏 TUI 模式用）
 )
 
-const maxLogSize = 5 << 20 // 5MB 轮转
+// maxLogSize 是普通模式轮转阈值；低内存模式通过 SetLowMemory(true) 收紧到 1MB。
+var maxLogSize atomic.Int64
+
+func init() { maxLogSize.Store(5 << 20) }
+
+// SetLowMemory 切换日志轻量化：降低轮转阈值，避免小内存机器日志占用过多磁盘/缓冲。
+func SetLowMemory(on bool) {
+	if on {
+		maxLogSize.Store(1 << 20)
+	} else {
+		maxLogSize.Store(5 << 20)
+	}
+}
 
 var (
 	curLevel     atomic.Int32
@@ -141,12 +153,14 @@ func logAt(l Level, tag, color, format string, a ...any) {
 		fmt.Printf("%s[%s]%s %s\n", color, tag, ColorReset, msg)
 	}
 
+	// 惰性构造写入行：文件不可写或低等级被过滤时不产生额外字符串分配。
 	logMu.Lock()
 	if logFile != nil {
-		n, err := logFile.WriteString(fmt.Sprintf("%s [%s] %s\n", ts, tag, msg))
+		line := ts + " [" + tag + "] " + msg + "\n"
+		n, err := logFile.WriteString(line)
 		if err == nil {
 			logSize += int64(n)
-			if logSize > maxLogSize {
+			if logSize > maxLogSize.Load() {
 				rotateLocked()
 			}
 		}

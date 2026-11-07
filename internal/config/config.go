@@ -1,6 +1,7 @@
 package config
 
 import (
+	"argoz/internal/sys"
 	"argoz/internal/xutil"
 	"encoding/json"
 	"errors"
@@ -164,28 +165,15 @@ func (s Settings) EffectiveLowMemory(totalMB int) bool {
 	}
 }
 
-// detectTotalMemoryMB 读取 Linux /proc/meminfo；其他平台返回 0（未知）。
-// 配置包不引入平台相关依赖，未知总内存时不自动启用低内存基线。
+// detectTotalMemoryMB 返回用于默认配置基线的有效内存上限（MB）。
+// cgroup 上限优先：容器被限制到 64MB 时，即使宿主有 16GB 也应采用低内存基线。
+// 无 cgroup 上限或读取失败时回退 /proc/meminfo 的 MemTotal；其他平台返回 0（未知）。
 func detectTotalMemoryMB() int {
-	if runtime.GOOS != "linux" {
-		return 0
+	info := sys.ReadMemInfo()
+	if info.CgroupMaxMB > 0 {
+		return info.CgroupMaxMB
 	}
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 0
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "MemTotal:" {
-			continue
-		}
-		kb, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil || kb <= 0 {
-			return 0
-		}
-		return int(kb / 1024)
-	}
-	return 0
+	return info.TotalMB
 }
 
 // defaultSettingsForTotalMemory 按已知总内存生成默认设置。

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"argoz/internal/sys"
+	"testing"
+)
 
 func TestDefaultUDPDisabled(t *testing.T) {
 	s := DefaultSettings()
@@ -132,5 +135,179 @@ func TestFixupMemoryMode(t *testing.T) {
 	c.fixup()
 	if c.Settings.MemoryMode != MemoryModeAuto {
 		t.Fatalf("未知 MemoryMode 应退化为 auto，实际 %s", c.Settings.MemoryMode)
+	}
+}
+
+// ---------- cgroup 内存感知（纯函数，不依赖运行环境） ----------
+
+func TestParseMemInfo(t *testing.T) {
+	data := "MemTotal:       16384 kB\nMemFree:         1024 kB\nMemAvailable:   8192 kB\n"
+	total, avail := sys.ParseMemInfo(data)
+	if total != 16 || avail != 8 {
+		t.Fatalf("ParseMemInfo=%d/%d，期望 16/8", total, avail)
+	}
+	if total, avail := sys.ParseMemInfo("garbage\nMemTotal: nope kB\nMemAvailable: -1 kB\n"); total != 0 || avail != 0 {
+		t.Fatalf("非法 meminfo 应返回 0/0，实际 %d/%d", total, avail)
+	}
+}
+
+func TestParseCgroupMB(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"67108864", 64},   // cgroup v2 memory.max = 64MiB
+		{"268435456", 256}, // 256MiB
+		{"max", 0},         // v2 无限制
+		{"MAX\n", 0},
+		{"9223372036854771712", 0}, // v1 无限制哨兵
+		{"", 0},
+		{"bogus", 0},
+		{"-1", 0},
+		{"1048575", 0}, // 不足 1MB 按 0 处理
+	}
+	for _, tc := range cases {
+		if got := sys.ParseCgroupMB(tc.raw); got != tc.want {
+			t.Fatalf("ParseCgroupMB(%q)=%d，期望 %d", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestParseOOMKills(t *testing.T) {
+	// cgroup v2 memory.events
+	ev := "low 0\nhigh 0\nmax 12\noom 3\noom_kill 3\n"
+	if got := sys.ParseOOMKills(ev); got != 3 {
+		t.Fatalf("v2 oom_kill=%d，期望 3", got)
+	}
+	// cgroup v1 memory.oom_control
+	v1 := "oom_kill_disable 0\nunder_oom 0\noom_kill 7\n"
+	if got := sys.ParseOOMKills(v1); got != 7 {
+		t.Fatalf("v1 oom_kill=%d，期望 7", got)
+	}
+	for _, bad := range []string{"", "oom_kill bogus\n", "oom 3\n"} {
+		if got := sys.ParseOOMKills(bad); got != 0 {
+			t.Fatalf("ParseOOMKills(%q)=%d，期望 0", bad, got)
+		}
+	}
+}
+
+func TestParseCgroupPath(t *testing.T) {
+	v2, v1 := sys.ParseCgroupPath("0::/\n")
+	if v2 != "/" || v1 != "/" {
+		t.Fatalf("v2 根路径解析异常: %q/%q", v2, v1)
+	}
+	v2, v1 = sys.ParseCgroupPath("5:memory:/docker/abc\n3:cpu,cpuacct:/docker/abc\n0::/user.slice\n")
+	if v2 != "/user.slice" || v1 != "/docker/abc" {
+		t.Fatalf("混合 v1/v2 路径解析异常: v2=%q v1=%q", v2, v1)
+	}
+}
+
+func TestEffectiveLimitMB(t *testing.T) {
+	cases := []struct {
+		name string
+		info sys.MemInfo
+		want int
+	}{
+		{"无 cgroup 上限用宿主总量", sys.MemInfo{TotalMB: 16384}, 16384},
+		{"cgroup 上限优先", sys.MemInfo{TotalMB: 16384, CgroupMaxMB: 64}, 64},
+		{"cgroup 无限制回退宿主", sys.MemInfo{TotalMB: 512, CgroupMaxMB: 0}, 512},
+		{"完全未知", sys.MemInfo{}, 0},
+	}
+	for _, tc := range cases {
+		if got := tc.info.EffectiveLimitMB(); got != tc.want {
+			t.Fatalf("%s: EffectiveLimitMB=%d，期望 %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestEffectiveAvailableMB(t *testing.T) {
+	cases := []struct {
+		name string
+		info sys.MemInfo
+		want int
+	}{
+		{"无 cgroup 上限用 MemAvailable", sys.MemInfo{TotalMB: 512, AvailableMB: 200}, 200},
+		{"cgroup 剩余额度更少时取剩余", sys.MemInfo{TotalMB: 16384, AvailableMB: 8000, CgroupMaxMB: 64, CgroupCurrentMB: 40}, 24},
+		{"cgroup 剩余额度更多时取 MemAvailable", sys.MemInfo{TotalMB: 256, AvailableMB: 20, CgroupMaxMB: 128, CgroupCurrentMB: 10}, 20},
+		{"已用超过上限按 0", sys.MemInfo{AvailableMB: 100, CgroupMaxMB: 64, CgroupCurrentMB: 80}, 0},
+		{"MemAvailable 未知时用 cgroup 剩余", sys.MemInfo{CgroupMaxMB: 96, CgroupCurrentMB: 30}, 66},
+	}
+	for _, tc := range cases {
+		if got := tc.info.EffectiveAvailableMB(); got != tc.want {
+			t.Fatalf("%s: EffectiveAvailableMB=%d，期望 %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestMemInfoLowMemoryDerived(t *testing.T) {
+	cases := []struct {
+		name string
+		info sys.MemInfo
+		want bool
+	}{
+		{"宿主 64MB", sys.MemInfo{TotalMB: 64, AvailableMB: 32}, true},
+		{"阈值 96MB", sys.MemInfo{TotalMB: LowMemoryThresholdMB}, true},
+		{"97MB 普通", sys.MemInfo{TotalMB: LowMemoryThresholdMB + 1}, false},
+		{"宿主很大但 cgroup 限制 64MB", sys.MemInfo{TotalMB: 16384, AvailableMB: 8000, CgroupMaxMB: 64, CgroupCurrentMB: 10}, true},
+		{"cgroup 限制 128MB 不触发", sys.MemInfo{TotalMB: 64, CgroupMaxMB: 128}, false},
+		{"完全未知不误判", sys.MemInfo{}, false},
+	}
+	for _, tc := range cases {
+		got := tc.info.WithDerived()
+		if got.LowMemory != tc.want {
+			t.Fatalf("%s: LowMemory=%v，期望 %v", tc.name, got.LowMemory, tc.want)
+		}
+	}
+	if (sys.MemInfo{}).WithDerived().Known {
+		t.Fatal("完全未知时 Known 应为 false")
+	}
+	if !(sys.MemInfo{TotalMB: 64}).WithDerived().Known {
+		t.Fatal("读到 MemTotal 时 Known 应为 true")
+	}
+}
+
+func TestCgroupLimitSelectsLowMemoryBaseline(t *testing.T) {
+	// 模拟：宿主 16GB，但 cgroup 只有 64MB；默认配置必须走低内存基线。
+	info := sys.MemInfo{
+		TotalMB:         sys.ParseCgroupMB("17179869184"),
+		CgroupMaxMB:     sys.ParseCgroupMB("67108864"),
+		CgroupCurrentMB: sys.ParseCgroupMB("10485760"),
+	}.WithDerived()
+	if !info.LowMemory {
+		t.Fatal("cgroup 64MB 限制应判定为低内存")
+	}
+	limit := info.EffectiveLimitMB()
+	if limit != 64 {
+		t.Fatalf("有效上限应为 64MB，实际 %dMB", limit)
+	}
+	settings := defaultSettingsForTotalMemory(limit)
+	if settings.MemoryMode != MemoryModeLow || settings.MaxConns != 24 ||
+		settings.MaxUDPSessions != 8 || settings.UDPEnabled || settings.IdleTimeout != "3m" {
+		t.Fatalf("cgroup 限制未落到低内存基线: %v", settings)
+	}
+	if !settings.EffectiveLowMemory(limit) {
+		t.Fatal("auto 模式应按 cgroup 有效上限启用低内存")
+	}
+
+	// 无 cgroup 上限时保持普通机器基线。
+	normal := sys.MemInfo{TotalMB: 16384, AvailableMB: 8192}.WithDerived()
+	if normal.LowMemory || normal.EffectiveLimitMB() != 16384 {
+		t.Fatal("无 cgroup 上限时应按宿主总量判定")
+	}
+	ns := defaultSettingsForTotalMemory(normal.EffectiveLimitMB())
+	if ns.MemoryMode != MemoryModeNormal || ns.MaxConns != 128 || ns.IdleTimeout != "5m" {
+		t.Fatalf("普通机器基线被改变: %v", ns)
+	}
+}
+
+func TestDetectTotalMemoryMBPrefersCgroup(t *testing.T) {
+	// 纯只读探测：有 cgroup 上限时返回该上限，否则返回宿主总量；不依赖具体运行环境。
+	info := sys.ReadMemInfo()
+	got := detectTotalMemoryMB()
+	if info.CgroupMaxMB > 0 && got != info.CgroupMaxMB {
+		t.Fatalf("cgroup 上限 %dMB 应优先，实际 %dMB", info.CgroupMaxMB, got)
+	}
+	if info.CgroupMaxMB <= 0 && got != info.TotalMB {
+		t.Fatalf("无 cgroup 上限时应回退 MemTotal %dMB，实际 %dMB", info.TotalMB, got)
 	}
 }

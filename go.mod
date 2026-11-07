@@ -1,3 +1,3 @@
 module argoz
 
-go 1.22
+go 1.27
