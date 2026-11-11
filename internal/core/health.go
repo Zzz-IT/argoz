@@ -322,8 +322,16 @@ type runtimeSample struct {
 	fd  int
 }
 
+// runtimeInterval 返回 L4 采样间隔；低内存时降低采样频率，减少自检本身的开销。
+func runtimeInterval() time.Duration {
+	if LowMemoryActive() {
+		return 10 * time.Minute
+	}
+	return runtimeEvery
+}
+
 func (e *Engine) runtimeLoop(ctx context.Context) {
-	t := time.NewTicker(runtimeEvery)
+	t := time.NewTicker(runtimeInterval())
 	defer t.Stop()
 
 	var samples []runtimeSample
@@ -361,9 +369,10 @@ func (e *Engine) runtimeLoop(ctx context.Context) {
 		if dg >= leakThreshold || df >= leakThreshold {
 			LogErr("检测到资源泄漏迹象（%s 内 goroutine %+d / fd %+d），触发自愈", runtimeWindow, dg, df)
 			if e.daemon {
-				LogErr("守护模式：退出进程，交由 systemd/OpenRC 拉起")
-				e.Shutdown()
-				os.Exit(1)
+				LogErr("守护模式：请求主进程优雅退出，交由 systemd/OpenRC 拉起")
+				// 不能在这里 os.Exit：会跳过 main 的 defer，留下 lock/socket/心跳。
+				e.ReportFatal(fmt.Errorf("资源泄漏：goroutine %+d / fd %+d（%s）", dg, df, runtimeWindow))
+				return
 			}
 			samples = nil
 		}

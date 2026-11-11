@@ -2,6 +2,15 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [1.4.1] - 2026-11-11
+
+### 修复
+
+- **daemon 自愈退出会留下陈旧 lock/socket/心跳**：资源泄漏检测不再在 goroutine 里直接 `os.Exit`，改为向 main 上报 fatal，由 main 正常返回并执行 defer 清理；`Shutdown` 改为幂等。
+- **僵尸进程导致 daemon 无法重启**：Linux 下 `/proc/<pid>/stat` 状态为 `Z`/`X` 视为死亡；锁文件新增 `.meta` 记录 pid 启动 ticks，能接管僵尸锁和 PID 复用后的陈旧锁，并清理旧 RPC socket/addr。
+- **升级/自守护路径同样跳过清理**：supervisor、update 的退出路径不再 `os.Exit`，改为返回错误或 `RequestExit`；`ReloadSelf` 失败时恢复实例锁。
+- **保活复查**：supervisor 连续秒退使用 2s→5s→15s→30s 退避，稳定运行 1 分钟后复位；信号处理只关闭一次 done channel；低内存下 L4 自检降频到 10 分钟。
+
 ## [1.4.0] - 2026-01-08
 
 ### 新增
@@ -243,7 +252,9 @@
 - 本地监听为纯 HTTP，TLS 由 Cloudflare 边缘终结，无需任何证书
 - 面向 Linux（x86_64 / aarch64），Windows / macOS 仅用于开发调试
 
-[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.3.6...HEAD
+[Unreleased]: https://github.com/Zzz-IT/argoz/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/Zzz-IT/argoz/releases/tag/v1.4.1
+[1.4.0]: https://github.com/Zzz-IT/argoz/releases/tag/v1.4.0
 [1.3.6]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.6
 [1.3.5]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.5
 [1.3.4]: https://github.com/Zzz-IT/argoz/releases/tag/v1.3.4

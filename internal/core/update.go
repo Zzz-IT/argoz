@@ -973,7 +973,8 @@ func (e *Engine) restartAfterSelfUpdate(res UpdateResult) (UpdateResult, error) 
 		res.Hint = "supervisor 将自动拉起新版本"
 		go func() {
 			time.Sleep(600 * time.Millisecond)
-			os.Exit(0)
+			// 由 main 统一退出并执行 defer；直接 os.Exit 会跳过锁/socket/心跳清理。
+			e.RequestExit(0)
 		}()
 	default:
 		res.Hint = "新版本已就位，但未检测到 systemd/OpenRC/supervisor，需要手动重启 daemon"

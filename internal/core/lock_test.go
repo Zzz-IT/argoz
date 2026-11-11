@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,4 +44,29 @@ func TestLockTakesOverStale(t *testing.T) {
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatal("Release 应删除锁文件")
 	}
+}
+
+func TestLockTakesOverPIDReuse(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("PID starttime 仅在 Linux 校验")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "argoz.lock")
+	pid := os.Getpid()
+	if err := os.WriteFile(p, []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 同 PID 但错误的启动 tick：模拟 PID 复用后的陈旧锁。
+	if err := os.WriteFile(p+".meta", []byte(strconv.Itoa(pid)+" 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := AcquireLock(dir, "")
+	if err != nil {
+		t.Fatalf("PID 复用锁应可接管: %v", err)
+	}
+	data, _ := os.ReadFile(p)
+	if strings.TrimSpace(string(data)) != strconv.Itoa(pid) {
+		t.Fatalf("新锁 pid 不正确: %q", data)
+	}
+	l.Release()
 }

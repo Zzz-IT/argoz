@@ -20,3 +20,6 @@ func pidAliveOS(pid int) bool {
 	_ = syscall.CloseHandle(syscall.Handle(h))
 	return true
 }
+
+// pidStartTime Windows 不提供 /proc 启动时间。
+func pidStartTime(pid int) (uint64, bool) { return 0, false }

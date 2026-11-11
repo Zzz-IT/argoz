@@ -12,18 +12,16 @@ import (
 )
 
 // runSupervisor 父进程守护：拉起 argoz -d，退出后自动重启（容器没有 init 时用）
-func runSupervisor(dir string) {
+func runSupervisor(dir string) error {
 	lock, err := core.AcquireLock(dir, "argoz-supervisor.lock")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer lock.Release()
 
 	exe, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "定位自身程序失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("定位自身程序失败: %w", err)
 	}
 
 	var mu sync.Mutex
@@ -31,6 +29,7 @@ func runSupervisor(dir string) {
 	stopping := false
 
 	doneCh := make(chan struct{})
+	var doneOnce sync.Once
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -42,7 +41,7 @@ func runSupervisor(dir string) {
 		if c != nil && c.Process != nil {
 			_ = c.Process.Signal(syscall.SIGTERM)
 		}
-		close(doneCh)
+		doneOnce.Do(func() { close(doneCh) })
 	}()
 
 	// 崩溃退避：稳定运行越久，下次重启越快；连续秒退说明是启动即崩
@@ -55,7 +54,7 @@ func runSupervisor(dir string) {
 		mu.Unlock()
 		if st {
 			fmt.Println("[supervisor] 已停止")
-			return
+			return nil
 		}
 
 		cmd := exec.Command(exe, "-d", "-dir", dir)
@@ -79,7 +78,7 @@ func runSupervisor(dir string) {
 			mu.Unlock()
 			if st {
 				fmt.Println("[supervisor] 已停止")
-				return
+				return nil
 			}
 			if ranFor >= time.Minute {
 				// 跑满 1 分钟视为稳定，清空崩溃计数。
@@ -107,7 +106,7 @@ func runSupervisor(dir string) {
 
 		select {
 		case <-doneCh:
-			return
+			return nil
 		case <-time.After(backoff):
 		}
 		if backoff < 30*time.Second && crashes == 0 {

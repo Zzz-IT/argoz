@@ -30,7 +30,7 @@ const (
 )
 
 // Version 发布时由 CI 通过 -ldflags "-X argoz/internal/config.Version=vX.Y.Z" 注入
-var Version = "v1.3.6"
+var Version = "v1.4.1"
 
 // AppVersion 发布时由 CI 通过 -ldflags "-X main.AppVersion=v1.0.0" 注入
 var AppVersion = "v1.2.0"

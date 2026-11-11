@@ -130,6 +130,7 @@ func (e *Engine) repairLocks() []string {
 		_, _ = fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &pid)
 		if pid > 0 && pid != os.Getpid() && !pidAlive(pid) {
 			if err := os.Remove(lock); err == nil {
+				_ = os.Remove(lockMetaPath(lock))
 				lines = append(lines, "已清理陈旧实例锁")
 			}
 		}

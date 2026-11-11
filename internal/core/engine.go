@@ -21,13 +21,51 @@ type Engine struct {
 	rt      map[string]*nodeRuntime
 	dataDir string
 
-	cancel context.CancelFunc
-	daemon bool
-	health *healthState
+	cancel   context.CancelFunc
+	daemon   bool
+	health   *healthState
+	shutdown sync.Once
+	fatalCh  chan error
+	exitCh   chan int
 }
 
 func NewEngine(cfg *Config, dataDir string) *Engine {
-	return &Engine{cfg: cfg, rt: map[string]*nodeRuntime{}, dataDir: dataDir, health: newHealthState()}
+	return &Engine{
+		cfg:     cfg,
+		rt:      map[string]*nodeRuntime{},
+		dataDir: dataDir,
+		health:  newHealthState(),
+		fatalCh: make(chan error, 1),
+		exitCh:  make(chan int, 1),
+	}
+}
+
+// Fatal 返回不可恢复错误通道。main 收到后正常返回，确保 defer 清理锁/socket/心跳。
+func (e *Engine) Fatal() <-chan error { return e.fatalCh }
+
+// ReportFatal 上报致命错误；不会阻塞调用方，也不会直接 os.Exit。
+func (e *Engine) ReportFatal(err error) {
+	if err == nil || e.fatalCh == nil {
+		return
+	}
+	select {
+	case e.fatalCh <- err:
+	default:
+	}
+}
+
+// ExitRequested 返回主动退出请求通道（升级后交由 supervisor 重启时使用）。
+func (e *Engine) ExitRequested() <-chan int { return e.exitCh }
+
+// RequestExit 请求 main 正常退出；由 main 统一执行清理，避免 os.Exit 跳过 defer。
+func (e *Engine) RequestExit(code int) {
+	if e.exitCh == nil {
+		return
+	}
+	select {
+	case e.exitCh <- code:
+	default:
+	}
 }
 
 // SetDaemon 标记是否运行在守护模式（资源泄漏时允许退出交系统拉起）
@@ -156,20 +194,22 @@ func (e *Engine) Start() {
 
 // Shutdown 停止全部节点
 func (e *Engine) Shutdown() {
-	e.StopHealth()
-	e.mu.Lock()
-	rts := make([]*nodeRuntime, 0, len(e.rt))
-	for _, v := range e.rt {
-		rts = append(rts, v)
-	}
-	e.mu.Unlock()
-
-	for _, rt := range rts {
-		if rt.tun != nil {
-			rt.tun.Stop()
+	e.shutdown.Do(func() {
+		e.StopHealth()
+		e.mu.Lock()
+		rts := make([]*nodeRuntime, 0, len(e.rt))
+		for _, v := range e.rt {
+			rts = append(rts, v)
 		}
-		rt.stopServer()
-	}
+		e.mu.Unlock()
+
+		for _, rt := range rts {
+			if rt.tun != nil {
+				rt.tun.Stop()
+			}
+			rt.stopServer()
+		}
+	})
 }
 
 func (e *Engine) startNode(id string) error {
@@ -593,9 +633,20 @@ func (e *Engine) DaemonProto() int { return 1 }
 // ReloadSelf 原地替换为新二进制（Linux execve，PID 不变）。
 // 执行前主动释放实例锁与心跳文件，否则新镜像会把自己当成"已有实例"而拒绝启动。
 func (e *Engine) ReloadSelf() error {
-	_ = os.Remove(filepath.Join(e.dataDir, "argoz.lock"))
+	lockPath := filepath.Join(e.dataDir, "argoz.lock")
+	metaPath := lockMetaPath(lockPath)
+	_ = os.Remove(lockPath)
+	_ = os.Remove(metaPath)
 	_ = os.Remove(HeartbeatPath(e.dataDir))
-	return execSelf()
+	if err := execSelf(); err != nil {
+		// execve 失败时进程仍在运行：把锁补回去，避免另一个实例趁虚而入。
+		_ = os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600)
+		if start, ok := pidStartTime(os.Getpid()); ok {
+			_ = os.WriteFile(metaPath, []byte(fmt.Sprintf("%d %d\n", os.Getpid(), start)), 0o600)
+		}
+		return err
+	}
+	return nil
 }
 
 // Reload 满足 rpc.API（本地引擎直接原地重启）

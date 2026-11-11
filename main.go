@@ -63,31 +63,34 @@ func main() {
 
 	switch {
 	case *supervise:
-		runSupervisor(dataDir)
+		if err := runSupervisor(dataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 	case *daemonMode:
-		runDaemon(dataDir)
+		if err := runDaemon(dataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 	default:
 		runPanel(dataDir)
 	}
 }
 
 // runDaemon 常驻引擎：跑所有节点 + 保活 + 本地控制通道
-func runDaemon(dir string) {
+func runDaemon(dir string) error {
 	lock, err := core.AcquireLock(dir, "argoz.lock")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer lock.Release()
 
 	cfg, err := config.LoadConfig(dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("加载配置失败: %w", err)
 	}
-
 	if err := logx.InitLog(cfg.Dir(), cfg.Settings.LogLevel); err != nil {
-		fmt.Fprintf(os.Stderr, "打开日志文件失败: %v\n", err)
+		return fmt.Errorf("打开日志文件失败: %w", err)
 	}
 	defer logx.CloseLog()
 
@@ -101,8 +104,7 @@ func runDaemon(dir string) {
 	// 面板等待的是 RPC 可用，不是 cloudflared/隧道已经就绪；环境修复不能阻塞面板。
 	srv, err := rpc.Start(e, cfg.Dir())
 	if err != nil {
-		logx.LogErr("启动控制通道失败: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("启动控制通道失败: %w", err)
 	}
 	defer srv.Shutdown()
 
@@ -140,8 +142,15 @@ func runDaemon(dir string) {
 		logx.LogInfo("收到退出信号")
 	case <-srv.Done():
 		logx.LogInfo("控制通道关闭")
+	case fatalErr := <-e.Fatal():
+		// 资源泄漏等自愈错误：返回 main 让 defer 依次释放 RPC、心跳、锁和日志。
+		logx.LogErr("daemon 自愈退出: %v", fatalErr)
+		return fmt.Errorf("daemon 自愈退出: %w", fatalErr)
+	case code := <-e.ExitRequested():
+		logx.LogInfo("收到主动退出请求（code=%d），交由服务管理器拉起", code)
 	}
 	logx.LogInfo("daemon 正在退出...")
+	return nil
 }
 
 // runPanel 面板：只做客户端，退出不影响 daemon
