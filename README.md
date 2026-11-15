@@ -286,7 +286,7 @@ argoz update --status     # 查看自更新策略、下次检查、连续失败�
    - Variable `ARGOZ_SIGNING_PUBKEY`：对应公钥（首次签名时 `tools/sign` 会把公钥打在 Actions 日志里）
 3. 之后打 tag 发布，`checksums.txt.sig` 会随 release 一起上传；注入了公钥的构建会强制校验。
 
-未配置签名时流水线会写一个空签名占位、构建照常可用（公钥为空即不校验）。注意：**公钥是在构建时写进二进制的**，轮换密钥需要重新发版。
+未配置私钥时不会生成签名文件，release 里只有 checksums.txt（公钥为空即不校验）。注意：**公钥是在构建时写进二进制的**，轮换密钥需要重新发版。
 
 ## 低内存模式
 

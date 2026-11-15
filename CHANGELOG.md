@@ -2,7 +2,7 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
-## [1.5.0] - 2026-11-15
+## [1.5.1] - 2026-11-15
 
 ### 新增
 
@@ -12,7 +12,7 @@
   - **cloudflared** 交给其自带自更新：开启后不再传 `--no-autoupdate`，由 cloudflared 按自身周期（默认 24h）检查替换；关闭则恢复 `--no-autoupdate`，版本完全由 `argoz update --component cloudflared` 控制。开关变更在下次隧道启动/重连时生效。
   - 孤儿清理不再依赖 `--no-autoupdate` 作为识别标志：新增 `isOurCloudflared`，按「cloudflared + tunnel 子命令 + `--url`/`--token`」识别；pidfile 路径还会先按节点 ID 精确匹配，避免 PID 复用时误杀。
   - 新增 `argoz update --status`：展示当前通道、低内存状态、两项开关、下次检查时间、连续失败原因与待验证版本；面板「7 本体维护」新增 `8 后台自更新状态` 展示同一份信息。
-- **发布签名校验（Ed25519）**：发布流水线可用私钥对 `checksums.txt` 生成 `checksums.txt.sig`，客户端用通过 ldflags 注入的内置公钥强制校验；缺失或不匹配直接拒绝升级。未注入公钥的构建跳过校验，保持对旧发布产物的兼容。签名工具为 `tools/sign`，仅依赖标准库。
+- **发布签名校验（Ed25519）**：发布流水线可用私钥对 `checksums.txt` 生成 `checksums.txt.sig`，客户端用通过 ldflags 注入的内置公钥强制校验；缺失或不匹配直接拒绝升级。未注入公钥的构建跳过校验，保持对旧发布产物的兼容。签名工具为 `tools/sign`，仅依赖标准库。未配置私钥时不会生成签名文件（GitHub 拒绝 0 字节资产）。
 - **配置 v3 迁移**：旧配置没有 `auto_update_self` / `auto_update_cloudflared`，反序列化后是零值 false，与「默认开启」不符。`fixup()` 升到 v3 时按当前机器的默认基线补齐（小内存机器仍为 false），已是 v3 的配置不再改写，用户手动关闭会被保留。
 - **低内存模式固定手动**：低内存基线默认关闭两个开关；运行期（含 OOM 降级后）跳过本体检查，且**无论配置如何都强制给 cloudflared 传 `--no-autoupdate`**——面板此时隐藏开关，靠配置取值会让用户既关不掉又挡不住下载。
 

@@ -21,11 +21,10 @@ func main() {
 
 	raw := strings.TrimSpace(os.Getenv("RELEASE_SIGNING_KEY"))
 	if raw == "" {
-		if err := os.WriteFile(path+".sig", nil, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "写入占位签名失败: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("未配置 RELEASE_SIGNING_KEY，已写入空签名占位")
+		// GitHub 拒绝 0 字节的 release 资产，所以未配置私钥时不能留空占位文件；
+		// 客户端在公钥为空时本来就不校验签名。
+		_ = os.Remove(path + ".sig")
+		fmt.Println("未配置 RELEASE_SIGNING_KEY，跳过签名（该发布不含 checksums.txt.sig）")
 		return
 	}
 

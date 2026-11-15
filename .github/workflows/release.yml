@@ -70,9 +70,18 @@ jobs:
           cat checksums.txt
 
       - name: sign checksums
+        id: sign
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-        run: go run ./tools/sign dist/checksums.txt
+        run: |
+          go run ./tools/sign dist/checksums.txt
+          # GitHub 拒绝 0 字节资产，未签名时不加入附件列表。
+          if [ -s dist/checksums.txt.sig ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f dist/checksums.txt.sig
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: release notes from CHANGELOG
         run: |
@@ -106,6 +115,6 @@ jobs:
             dist/argoz-amd64
             dist/argoz-arm64
             dist/checksums.txt
-            dist/checksums.txt.sig
+            ${{ steps.sign.outputs.signed == 'true' && 'dist/checksums.txt.sig' || '' }}
           fail_on_unmatched_files: true
           make_latest: true
