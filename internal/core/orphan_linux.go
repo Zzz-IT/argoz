@@ -47,7 +47,14 @@ func CleanupOrphanCloudflared(cfg *Config) []string {
 				continue
 			}
 			args, err := readProcArgs(pid)
-			if err != nil || len(args) == 0 || !isCloudflaredProcess(args[0]) || !hasArg(args, "--no-autoupdate") {
+			if err != nil || !isOurCloudflared(args) {
+				_ = os.Remove(path)
+				continue
+			}
+			// pidfile 文件名就是节点 ID：能对上配置时按节点参数精确匹配，
+			// 避免 PID 被系统复用到别人的 cloudflared 时误杀；节点已删除才退回宽松识别。
+			nodeID := strings.TrimSuffix(entry.Name(), ".pid")
+			if n := cfg.Find(nodeID); n != nil && !orphanMatchesNode(args, *n) {
 				_ = os.Remove(path)
 				continue
 			}

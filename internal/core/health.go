@@ -180,6 +180,8 @@ func (e *Engine) StartHealth() {
 
 	go e.probeLoop(ctx)
 	go e.runtimeLoop(ctx)
+	// 后台自更新：仅 daemon 且非低内存模式生效，内部自行判定开关与到期时间。
+	e.startAutoUpdate(ctx)
 }
 
 func (e *Engine) StopHealth() {

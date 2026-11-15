@@ -253,7 +253,40 @@ argoz update --component self
 argoz update --component cloudflared
 argoz update --offline
 argoz update --rollback
+argoz update --status     # 查看自更新策略、下次检查、连续失败、待验证版本
 ```
+
+### 后台自更新
+
+正常模式下可在设置页 `11 本体自更新` / `12 CF 自更新` 分别开关，两者机制不同：
+
+- **本体（由 argoz 自己检查）**：daemon 每日检查一次 GitHub Release。发现新版本**先下载、校验、装好**，重启时机再等空闲——这样有流量的站点也能把版本装上，不会永远停在旧版本。
+  - 重启门槛是所有转发会话归零（WS 连接 + UDP 会话都算）；一直有流量则最多等 7 天，之后强制重启并记一条告警。
+  - 检查或安装失败按 `1h → 2h → 4h → 6h` 退避，不会每小时刷日志；成功则回到 24 小时周期。
+  - 状态写在数据目录的 `update_state.json`，跨 daemon 重启保留，supervisor 频繁拉起也不会让检查永远轮不到。
+- **升级验证与自动回滚**：新版本落盘后记为「待验证」。重启后需稳定运行 3 分钟才确认升级完成；同一版本连续启动 2 次仍未确认（典型是启动即崩溃），自动回滚到 `backups/self` 里最近的备份并重启，避免无人值守时陷入崩溃—重启循环。
+- **通道限制**：只有 release 通道的构建参与后台自更新；本地 `go build` 出来的 dev 构建会被跳过，不会把自己的产物换成发布版。更新源固定官方仓库，不受 `ARGOZ_REPO` 影响（手动 `argoz update` 仍可用它）。
+- **cloudflared（交给它自己）**：开启后启动 cloudflared 时**不再传** `--no-autoupdate`，由 cloudflared 内建的周期性自更新（默认 24h）自行检查并替换二进制；关闭则传 `--no-autoupdate`，版本完全由 argoz 手动 `argoz update --component cloudflared` 控制。开关变更在下次隧道启动/重连时生效。
+- **低内存模式（含运行期 OOM 降级）**：两项开关直接隐藏，本体检查一律跳过，cloudflared 无论配置如何都强制 `--no-autoupdate`，避免下载/解压把内存顶爆。
+
+面板「7 本体维护 → 8 后台自更新状态」与 `argoz update --status` 展示同一份信息：通道、低内存状态、两项开关、下次检查时间、连续失败原因、待验证版本。
+
+### 发布签名（可选，推荐）
+
+发布流水线支持对 `checksums.txt` 做 Ed25519 分离签名，客户端在下载时用内置公钥校验，未签名或被篡改的 release 会被直接拒绝——无人值守自更新时这条尤其重要。
+
+启用步骤：
+
+1. 本地生成 32 字节种子（私钥不要提交到仓库）：
+   ```bash
+   head -c 32 /dev/urandom | base64
+   ```
+2. 仓库 Settings → Secrets and variables → Actions 配置：
+   - Secret `RELEASE_SIGNING_KEY`：上面的 base64 私钥种子
+   - Variable `ARGOZ_SIGNING_PUBKEY`：对应公钥（首次签名时 `tools/sign` 会把公钥打在 Actions 日志里）
+3. 之后打 tag 发布，`checksums.txt.sig` 会随 release 一起上传；注入了公钥的构建会强制校验。
+
+未配置签名时流水线会写一个空签名占位、构建照常可用（公钥为空即不校验）。注意：**公钥是在构建时写进二进制的**，轮换密钥需要重新发版。
 
 ## 低内存模式
 
@@ -265,6 +298,7 @@ argoz update --rollback
 - WS relay 缓冲降到 4KB、WS 帧上限 256KB、UDP 读缓冲 4KB、UDP socket 读写缓冲 16KB、cloudflared 日志扫描缓冲 16KB/256KB、tail 20 行；
 - L1 探针间隔放大 2 倍、L3/全量巡检轮次放大 4 倍，探针本身不成为压力来源；
 - 日志轮转阈值 5MB → 1MB；
+- **本体与 cloudflared 自更新固定手动**：设置页隐藏两个自更新开关，本体不发起后台检查，cloudflared 强制带 `--no-autoupdate`；需要时手动 `argoz update`；
 - 不后台预下载资源；安装脚本和面板只在缺失/损坏或用户确认时下载。
 
 cgroup `oom_kill` 累计增长时会触发 OOM 降级：切换低内存策略并关闭各节点 UDP 会话；心跳文件始终继续写入，避免 supervisor 误判 daemon 死亡形成重启风暴。自检页会显示 cgroup 上限、当前用量、OOM 累计与 inode 余量，并提供 `oom-recover` 修复动作。
@@ -335,6 +369,8 @@ bash install.sh --uninstall --purge  # 连配置、日志、cloudflared 一起�
 | UDP 空闲 | 60s | UDP 会话空闲回收时间，建议 < Cloudflare 100s |
 | UDP 会话上限 | 32 | 每节点 UDP 会话数，最大 128；低内存模式运行期上限 8 |
 | 内存模式 | auto | auto / low / normal；总内存 ≤96MB 自动按低内存基线运行 |
+| 本体自更新 | 开 | 正常模式每日检查一次，无活跃连接时自动安装并重启到新版本；低内存模式隐藏此项并保持手动 |
+| CF 自更新 | 开 | 交给 cloudflared 自带自更新（默认 24h）：开启时不传 `--no-autoupdate`；关闭则由 argoz 手动管理；低内存模式隐藏此项并强制 `--no-autoupdate` |
 | 日志级别 | info | error / warn / info / debug |
 
 ## 开发

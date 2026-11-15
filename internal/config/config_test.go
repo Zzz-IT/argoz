@@ -93,6 +93,20 @@ func TestDefaultSettingsMemoryBaseline(t *testing.T) {
 	}
 }
 
+func TestDefaultAutoUpdateFollowsMemoryBaseline(t *testing.T) {
+	normal := defaultSettingsForTotalMemory(LowMemoryThresholdMB + 1)
+	if !normal.AutoUpdateSelf || !normal.AutoUpdateCloudflared {
+		t.Fatalf("普通机器应默认开启自更新: self=%v cf=%v",
+			normal.AutoUpdateSelf, normal.AutoUpdateCloudflared)
+	}
+
+	low := defaultSettingsForTotalMemory(64)
+	if low.AutoUpdateSelf || low.AutoUpdateCloudflared {
+		t.Fatalf("低内存基线应默认关闭自更新（保持手动）: self=%v cf=%v",
+			low.AutoUpdateSelf, low.AutoUpdateCloudflared)
+	}
+}
+
 func TestEffectiveLowMemory(t *testing.T) {
 	cases := []struct {
 		mode    string
@@ -309,5 +323,30 @@ func TestDetectTotalMemoryMBPrefersCgroup(t *testing.T) {
 	}
 	if info.CgroupMaxMB <= 0 && got != info.TotalMB {
 		t.Fatalf("无 cgroup 上限时应回退 MemTotal %dMB，实际 %dMB", info.TotalMB, got)
+	}
+}
+
+func TestFixupMigratesAutoUpdateDefaults(t *testing.T) {
+	d := DefaultSettings()
+
+	// 老配置没有 auto_update_* 两个 key，反序列化是零值 false，迁移时按机器基线补齐。
+	old := &Config{Version: 2}
+	old.fixup()
+	if old.Settings.AutoUpdateSelf != d.AutoUpdateSelf || old.Settings.AutoUpdateCloudflared != d.AutoUpdateCloudflared {
+		t.Fatalf("v2 老配置应补齐自更新默认值: got self=%v cf=%v，期望 %v/%v",
+			old.Settings.AutoUpdateSelf, old.Settings.AutoUpdateCloudflared,
+			d.AutoUpdateSelf, d.AutoUpdateCloudflared)
+	}
+	if old.Version != 3 {
+		t.Fatalf("迁移后应为 v3，实际 %d", old.Version)
+	}
+
+	// 已经是 v3 的配置不再改写，用户手动关闭必须保留。
+	explicit := &Config{Version: 3}
+	explicit.Settings.AutoUpdateSelf = false
+	explicit.Settings.AutoUpdateCloudflared = false
+	explicit.fixup()
+	if explicit.Settings.AutoUpdateSelf || explicit.Settings.AutoUpdateCloudflared {
+		t.Fatal("v3 配置里用户关闭的自更新不应被迁移覆盖")
 	}
 }

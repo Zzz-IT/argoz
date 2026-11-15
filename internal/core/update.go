@@ -30,6 +30,9 @@ var (
 
 const cloudflaredRepo = "cloudflare/cloudflared"
 
+// defaultUpdateRepo 是 argoz 本体的官方仓库。
+const defaultUpdateRepo = "Zzz-IT/argoz"
+
 var (
 	artifactManagersMu sync.Mutex
 	artifactManagers   = map[string]*artifact.Manager{}
@@ -59,7 +62,7 @@ func updateRepo() string {
 	if repo := strings.Trim(strings.TrimSpace(os.Getenv("ARGOZ_REPO")), "/"); repo != "" {
 		return repo
 	}
-	return "Zzz-IT/argoz"
+	return defaultUpdateRepo
 }
 
 func updateAssetName() (string, error) {
@@ -210,6 +213,49 @@ func fetchChecksumsAt(ctx context.Context, repo, version string) (string, error)
 	return string(b), nil
 }
 
+// fetchReleaseFile 下载 release 目录下的一个小文件，返回内容与是否存在。
+func fetchReleaseFile(ctx context.Context, repo, version, name string) ([]byte, bool, error) {
+	u := releaseDownloadBase(repo, version) + "/" + name
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("User-Agent", "argoz-updater")
+	resp, err := updateHTTP.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("下载 %s 失败: HTTP %d", name, resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, false, err
+	}
+	return b, true, nil
+}
+
+// verifyChecksumsSignature 校验 checksums.txt 的分离签名。
+// 构建未注入公钥时跳过（未配置签名的仓库）；注入后则必须有签名且校验通过，
+// 否则拒绝升级——否则无人值守更新等于自动执行任意被投毒的 release。
+func verifyChecksumsSignature(ctx context.Context, repo, version string, data []byte) error {
+	if !ReleaseSignatureRequired() {
+		return nil
+	}
+	sig, found, err := fetchReleaseFile(ctx, repo, version, "checksums.txt.sig")
+	if err != nil {
+		return fmt.Errorf("下载发布签名失败: %w", err)
+	}
+	if !found {
+		return errors.New("该发布缺少 checksums.txt.sig，拒绝未签名升级")
+	}
+	return VerifyReleaseSignature(data, sig)
+}
+
 func parseChecksums(data string) map[string]string {
 	out := make(map[string]string)
 	for _, line := range strings.Split(data, "\n") {
@@ -246,6 +292,9 @@ func downloadUpdateTo(ctx context.Context, repo, target string) error {
 	}
 	checksums, err := fetchChecksums(ctx, repo)
 	if err != nil {
+		return err
+	}
+	if err := verifyChecksumsSignature(ctx, repo, "", []byte(checksums)); err != nil {
 		return err
 	}
 	want := ""
@@ -400,6 +449,9 @@ func applySelfUpdate(ctx context.Context, mgr *artifact.Manager, dataDir string,
 			if err != nil {
 				return info, UpdateResult{}, err
 			}
+			if err := verifyChecksumsSignature(ctx, repo, "", []byte(checksums)); err != nil {
+				return info, UpdateResult{}, err
+			}
 			want = parseChecksums(checksums)[mustSelfAsset()]
 			if want == "" {
 				return info, UpdateResult{}, fmt.Errorf("release latest 缺少 %s 的 SHA256，拒绝未校验升级", mustSelfAsset())
@@ -409,6 +461,9 @@ func applySelfUpdate(ctx context.Context, mgr *artifact.Manager, dataDir string,
 	} else if !offline {
 		checksums, err := fetchChecksumsAt(ctx, repo, version)
 		if err != nil {
+			return info, UpdateResult{}, err
+		}
+		if err := verifyChecksumsSignature(ctx, repo, version, []byte(checksums)); err != nil {
 			return info, UpdateResult{}, err
 		}
 		want = parseChecksums(checksums)[mustSelfAsset()]
@@ -670,6 +725,7 @@ func RunUpdateCommandLine(args []string, defaultDir string) error {
 	force := fs.Bool("force", false, "即使版本相同也重新下载/重装")
 	offline := fs.Bool("offline", false, "只使用本地缓存，不访问网络")
 	rollback := fs.Bool("rollback", false, "回滚到最近一次备份")
+	status := fs.Bool("status", false, "显示后台自更新策略与状态")
 	component := fs.String("component", "self", "组件：self 或 cloudflared")
 	repo := fs.String("repo", updateRepo(), "GitHub 仓库，例如 Zzz-IT/argoz")
 	if err := fs.Parse(args); err != nil {
@@ -688,6 +744,17 @@ func RunUpdateCommandLine(args []string, defaultDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	mgr := artifactManagerFor(dataDir)
+
+	if *status {
+		lines, err := AutoUpdateStatus(dataDir)
+		if err != nil {
+			return err
+		}
+		for _, line := range lines {
+			fmt.Println(line)
+		}
+		return nil
+	}
 
 	switch strings.ToLower(strings.TrimSpace(*component)) {
 	case "", "self", "argoz":
@@ -891,6 +958,7 @@ func (e *Engine) Info() DaemonInfo {
 		Version:    config.Version,
 		Nodes:      len(e.Nodes()),
 		DataDir:    e.dataDir,
+		LowMemory:  LowMemoryActive(),
 	}
 }
 

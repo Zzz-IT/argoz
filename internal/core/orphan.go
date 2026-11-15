@@ -22,6 +22,19 @@ func hasArg(args []string, name string) bool {
 	return false
 }
 
+// isOurCloudflared 判断进程是否是由 argoz 启动的 cloudflared 隧道进程。
+// 旧版本固定带 --no-autoupdate，可直接据此判定；开启 cloudflared 自带自更新后不再传该
+// flag，改按「tunnel 子命令 + --url/--token」识别，避免孤儿进程漏清理。
+func isOurCloudflared(args []string) bool {
+	if len(args) == 0 || !isCloudflaredProcess(args[0]) {
+		return false
+	}
+	if hasArg(args, "--no-autoupdate") {
+		return true
+	}
+	return hasArg(args, "tunnel") && (hasArg(args, "--url") || hasArg(args, "--token"))
+}
+
 // hasArgValue 匹配 "--name value" 或 "--name=value"。
 func hasArgValue(args []string, name, value string) bool {
 	for i, arg := range args {

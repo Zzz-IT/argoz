@@ -112,9 +112,9 @@ func TestFakeCloudflaredHelperSoft(t *testing.T) {
 }
 
 func TestTunnelArgsOrder(t *testing.T) {
-	// 临时隧道：全局 flag 必须在子命令之前
+	// 关闭 cloudflared 自带自更新（由 argoz 管理）：全局 flag 必须在子命令之前
 	n := Node{Port: 20001, Tunnel: TunnelCfg{Mode: "temp"}}
-	args, err := tunnelArgs(n)
+	args, err := tunnelArgs(n, false)
 	if err != nil {
 		t.Fatalf("构造参数失败: %v", err)
 	}
@@ -131,9 +131,24 @@ func TestTunnelArgsOrder(t *testing.T) {
 		t.Fatal("--no-autoupdate 必须在子命令之前，否则 cloudflared 会报 flag provided but not defined")
 	}
 
+	// 开启 cloudflared 自带自更新：不能再传 --no-autoupdate，否则自更新被禁用
+	autoArgs, err := tunnelArgs(n, true)
+	if err != nil {
+		t.Fatalf("构造参数失败: %v", err)
+	}
+	wantAuto := []string{"tunnel", "--url", "http://127.0.0.1:20001"}
+	if len(autoArgs) != len(wantAuto) {
+		t.Fatalf("开启自更新时参数数量不符: %v", autoArgs)
+	}
+	for i := range wantAuto {
+		if autoArgs[i] != wantAuto[i] {
+			t.Fatalf("开启自更新时第 %d 个参数应为 %q，实际 %q", i, wantAuto[i], autoArgs[i])
+		}
+	}
+
 	// 固定隧道
 	f := Node{Tunnel: TunnelCfg{Mode: "fixed", Token: "eyJhIjoiY2YifQ=="}}
-	args2, err := tunnelArgs(f)
+	args2, err := tunnelArgs(f, false)
 	if err != nil {
 		t.Fatalf("构造参数失败: %v", err)
 	}
@@ -144,9 +159,26 @@ func TestTunnelArgsOrder(t *testing.T) {
 		}
 	}
 
+	autoFixed, err := tunnelArgs(f, true)
+	if err != nil {
+		t.Fatalf("构造参数失败: %v", err)
+	}
+	wantAutoFixed := []string{"tunnel", "run", "--token", "eyJhIjoiY2YifQ=="}
+	if len(autoFixed) != len(wantAutoFixed) {
+		t.Fatalf("开启自更新时固定隧道参数数量不符: %v", autoFixed)
+	}
+	for i := range wantAutoFixed {
+		if autoFixed[i] != wantAutoFixed[i] {
+			t.Fatalf("开启自更新时固定隧道参数错误: %v", autoFixed)
+		}
+	}
+
 	// 缺 Token
-	if _, err := tunnelArgs(Node{Tunnel: TunnelCfg{Mode: "fixed"}}); err == nil {
+	if _, err := tunnelArgs(Node{Tunnel: TunnelCfg{Mode: "fixed"}}, false); err == nil {
 		t.Fatal("固定隧道缺少 Token 应报错")
+	}
+	if _, err := tunnelArgs(Node{Tunnel: TunnelCfg{Mode: "fixed"}}, true); err == nil {
+		t.Fatal("固定隧道缺少 Token 应报错（开启自更新时同样）")
 	}
 }
 

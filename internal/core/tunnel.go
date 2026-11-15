@@ -328,7 +328,8 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 		return err
 	}
 
-	args, err := tunnelArgs(node)
+	// 低内存模式下强制禁用 cloudflared 自带自更新（配置里开着也不生效）。
+	args, err := tunnelArgs(node, cloudflaredAutoUpdateEnabled(t.eng.Settings()))
 	if err != nil {
 		return err
 	}
@@ -456,17 +457,23 @@ func errorString(err error) string {
 }
 
 // tunnelArgs 构造 cloudflared 参数。
+// autoUpdate 为 true 时不传 --no-autoupdate，交给 cloudflared 自带的周期性自更新；
+// 为 false 时显式禁用，由 argoz 统一管理版本。
 // 注意：--no-autoupdate 是全局 flag，必须放在子命令之前，
 // 否则 cloudflared 会报 "flag provided but not defined" 并打印 usage。
-func tunnelArgs(n Node) ([]string, error) {
+func tunnelArgs(n Node, autoUpdate bool) ([]string, error) {
+	var args []string
+	if !autoUpdate {
+		args = append(args, "--no-autoupdate")
+	}
 	if n.Tunnel.Mode == "fixed" {
 		token := strings.TrimSpace(n.Tunnel.Token)
 		if token == "" {
 			return nil, errors.New("固定隧道缺少 Token")
 		}
-		return []string{"--no-autoupdate", "tunnel", "run", "--token", token}, nil
+		return append(args, "tunnel", "run", "--token", token), nil
 	}
-	return []string{"--no-autoupdate", "tunnel", "--url", fmt.Sprintf("http://127.0.0.1:%d", n.Port)}, nil
+	return append(args, "tunnel", "--url", fmt.Sprintf("http://127.0.0.1:%d", n.Port)), nil
 }
 
 // tunnelScanInitBuf 返回 cloudflared 日志扫描缓冲初始长度；低内存时降为 16KB。

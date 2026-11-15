@@ -2,6 +2,26 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [1.5.0] - 2026-11-15
+
+### 新增
+
+- **后台自更新（正常模式）**：设置页新增 `11 本体自更新` / `12 CF 自更新`，默认开启，低内存模式下两项直接隐藏。
+  - **本体**由 argoz 自行检查：每日一次，**先下载安装、空闲时再重启**（WS 连接与 UDP 会话都计入忙碌判定），一直有流量最多等 7 天强制生效。检查/安装失败按 `1h→2h→4h→6h` 退避，成功回到 24h。状态落盘到 `update_state.json`，跨 daemon 重启保留。非 Linux / 非 amd64·arm64 平台直接跳过，不再每小时重试报错。
+  - **升级验证与自动回滚**：新版本记为「待验证」，稳定运行 3 分钟才确认；同一版本连续启动 2 次仍未确认则自动回滚到最近备份并重启，避免无人值守时陷入崩溃—重启循环。
+  - **cloudflared** 交给其自带自更新：开启后不再传 `--no-autoupdate`，由 cloudflared 按自身周期（默认 24h）检查替换；关闭则恢复 `--no-autoupdate`，版本完全由 `argoz update --component cloudflared` 控制。开关变更在下次隧道启动/重连时生效。
+  - 孤儿清理不再依赖 `--no-autoupdate` 作为识别标志：新增 `isOurCloudflared`，按「cloudflared + tunnel 子命令 + `--url`/`--token`」识别；pidfile 路径还会先按节点 ID 精确匹配，避免 PID 复用时误杀。
+  - 新增 `argoz update --status`：展示当前通道、低内存状态、两项开关、下次检查时间、连续失败原因与待验证版本；面板「7 本体维护」新增 `8 后台自更新状态` 展示同一份信息。
+- **发布签名校验（Ed25519）**：发布流水线可用私钥对 `checksums.txt` 生成 `checksums.txt.sig`，客户端用通过 ldflags 注入的内置公钥强制校验；缺失或不匹配直接拒绝升级。未注入公钥的构建跳过校验，保持对旧发布产物的兼容。签名工具为 `tools/sign`，仅依赖标准库。
+- **配置 v3 迁移**：旧配置没有 `auto_update_self` / `auto_update_cloudflared`，反序列化后是零值 false，与「默认开启」不符。`fixup()` 升到 v3 时按当前机器的默认基线补齐（小内存机器仍为 false），已是 v3 的配置不再改写，用户手动关闭会被保留。
+- **低内存模式固定手动**：低内存基线默认关闭两个开关；运行期（含 OOM 降级后）跳过本体检查，且**无论配置如何都强制给 cloudflared 传 `--no-autoupdate`**——面板此时隐藏开关，靠配置取值会让用户既关不掉又挡不住下载。
+
+### 变更
+
+- 后台自更新只在 release 通道执行：发布构建由 CI 注入 `config.Channel=release`，本地 `go build`（dev）不参与，避免开发构建被发布版覆盖。
+- 后台自更新固定使用官方仓库，忽略 `ARGOZ_REPO`；手动 `argoz update` 仍支持该变量。
+- 面板 RPC 在 `Decode` 失败时重连重试一次，避免 daemon 自更新重启期间报一次「读取 daemon 响应失败」。
+
 ## [1.4.1] - 2026-11-11
 
 ### 修复

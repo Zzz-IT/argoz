@@ -26,6 +26,11 @@ func showSettings(e rpc.API) {
 		fmt.Printf("  8 UDP 空闲        %s\n", durOrRaw(s.UDPIdle))
 		fmt.Printf("  9 UDP 会话上限    %d\n", s.MaxUDPSessions)
 		fmt.Printf(" 10 内存模式        %s  %s\n", memoryModeText(s.MemoryMode), stMutedHint(memoryModeHelp(s.MemoryMode)))
+		// 低内存模式下自更新固定手动，开关直接不展示，避免出现「能改但不生效」的入口。
+		if !info.LowMemory {
+			fmt.Printf(" 11 本体自更新      %s  %s\n", boolText(s.AutoUpdateSelf), stMutedHint("每日检查一次"))
+			fmt.Printf(" 12 CF 自更新       %s  %s\n", boolText(s.AutoUpdateCloudflared), stMutedHint("由 cloudflared 自行检查"))
+		}
 		fmt.Printf("  %s%s%s\n", ColorGrey, strings.Repeat("─", 56), ColorReset)
 		fmt.Printf("  守护进程   PID %d · 已运行 %s · 内存 %s\n",
 			info.PID, durationText(time.Duration(info.UptimeSec)*time.Second), humanBytes(info.MemBytes))
@@ -143,6 +148,18 @@ func showSettings(e rpc.API) {
 			}
 			s.MemoryMode = v
 			LogInfo("内存模式已设为 %s：下一轮节点启动/重连时按新配额的连接与 UDP 上限执行", memoryModeText(v))
+			saveSettings(e, s)
+		case "11":
+			if info.LowMemory {
+				continue
+			}
+			s.AutoUpdateSelf = !s.AutoUpdateSelf
+			saveSettings(e, s)
+		case "12":
+			if info.LowMemory {
+				continue
+			}
+			s.AutoUpdateCloudflared = !s.AutoUpdateCloudflared
 			saveSettings(e, s)
 		case "0", "":
 			return

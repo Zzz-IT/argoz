@@ -32,6 +32,13 @@ const (
 // Version 发布时由 CI 通过 -ldflags "-X argoz/internal/config.Version=vX.Y.Z" 注入
 var Version = "v1.4.1"
 
+// ChannelRelease 是正式发布通道标识。
+const ChannelRelease = "release"
+
+// Channel 发布通道：release 由 CI 通过 -X 注入，本地 go build 保持 dev。
+// 后台自更新只在 release 通道执行，避免开发构建的产物被 release 二进制覆盖。
+var Channel = "dev"
+
 // AppVersion 发布时由 CI 通过 -ldflags "-X main.AppVersion=v1.0.0" 注入
 var AppVersion = "v1.2.0"
 
@@ -78,6 +85,12 @@ type Settings struct {
 	LogLevel       string `json:"log_level"`
 	// MemoryMode 运行内存基线：auto | low | normal。空值按 auto 处理。
 	MemoryMode string `json:"memory_mode"`
+	// AutoUpdateSelf 正常模式下后台检查并安装 argoz 本体新版本。
+	// 低内存模式下强制忽略（保持手动），避免更新过程的下载/解压把内存顶爆。
+	AutoUpdateSelf bool `json:"auto_update_self"`
+	// AutoUpdateCloudflared 正常模式下后台检查并替换 cloudflared 二进制。
+	// 同样在低内存模式强制忽略；替换不重启正在运行的隧道，新版本下次启动生效。
+	AutoUpdateCloudflared bool `json:"auto_update_cloudflared"`
 }
 
 func (s Settings) KeepaliveDur() time.Duration {
@@ -191,6 +204,9 @@ func defaultSettingsForTotalMemory(totalMB int) Settings {
 		ECH:            true,
 		LogLevel:       "info",
 		MemoryMode:     MemoryModeNormal,
+		// 普通机器默认开启后台自更新；小内存机器在下面显式关掉，保持手动升级。
+		AutoUpdateSelf:        true,
+		AutoUpdateCloudflared: true,
 	}
 	if totalMB > 0 && totalMB <= LowMemoryThresholdMB {
 		s.MaxConns = 24
@@ -199,6 +215,8 @@ func defaultSettingsForTotalMemory(totalMB int) Settings {
 		s.Keepalive = "30s"
 		s.IdleTimeout = "3m"
 		s.MemoryMode = MemoryModeLow
+		s.AutoUpdateSelf = false
+		s.AutoUpdateCloudflared = false
 	}
 	return s
 }
@@ -268,6 +286,14 @@ func (c *Config) fixup() {
 			c.Settings.PortRange = d.PortRange
 		}
 		c.Version = 2
+	}
+	// v3：新增两个自更新开关。老配置没有这两个 key，反序列化后是零值 false，
+	// 与文档承诺的「默认开启」不符，按当前机器的默认基线补齐；
+	// 小内存机器 d 里本身就是 false，因此迁移后仍是手动升级。
+	if c.Version < 3 {
+		c.Settings.AutoUpdateSelf = d.AutoUpdateSelf
+		c.Settings.AutoUpdateCloudflared = d.AutoUpdateCloudflared
+		c.Version = 3
 	}
 	if c.Settings.Listen == "" {
 		c.Settings.Listen = d.Listen

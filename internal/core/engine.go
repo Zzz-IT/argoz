@@ -27,6 +27,10 @@ type Engine struct {
 	shutdown sync.Once
 	fatalCh  chan error
 	exitCh   chan int
+
+	// autoUpdateOnce 保证后台自更新循环只启动一次；放在 Engine 上而不是包级变量，
+	// 避免多个 Engine（测试、未来 Stop/Start）互相干扰或永久失效。
+	autoUpdateOnce sync.Once
 }
 
 func NewEngine(cfg *Config, dataDir string) *Engine {

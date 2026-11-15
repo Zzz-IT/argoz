@@ -8,6 +8,9 @@ type DaemonInfo struct {
 	Version    string `json:"version"`
 	Nodes      int    `json:"nodes"`
 	DataDir    string `json:"data_dir"`
+	// LowMemory 是运行期实际生效的低内存状态（含 OOM 降级），
+	// 面板据此隐藏自更新开关等与低内存互斥的入口。
+	LowMemory bool `json:"low_memory"`
 }
 
 type UpdateInfo struct {

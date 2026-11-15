@@ -75,7 +75,17 @@ func (c *rpcClient) call(cmd string, in any, out any) error {
 
 	var resp rpcResponse
 	if err := c.dec.Decode(&resp); err != nil {
-		return fmt.Errorf("读取 daemon 响应失败: %w", err)
+		// daemon 可能刚重启（例如后台自更新原地 execve）：重连后重试一次，
+		// 避免面板在升级期间报一次无意义的「读取响应失败」。
+		if rerr := c.reconnect(); rerr != nil {
+			return fmt.Errorf("读取 daemon 响应失败: %w", err)
+		}
+		if err := c.enc.Encode(req); err != nil {
+			return err
+		}
+		if err := c.dec.Decode(&resp); err != nil {
+			return fmt.Errorf("读取 daemon 响应失败: %w", err)
+		}
 	}
 	if !resp.OK {
 		return fmt.Errorf("%s", resp.Error)
@@ -283,6 +293,14 @@ func (c *rpcClient) Info() daemonInfo {
 	var info daemonInfo
 	_ = c.call("info", nil, &info)
 	return info
+}
+
+func (c *rpcClient) AutoUpdateStatus() ([]string, error) {
+	var lines []string
+	if err := c.call("autoupdateStatus", nil, &lines); err != nil {
+		return nil, err
+	}
+	return lines, nil
 }
 
 func (c *rpcClient) UpdateCheck() (updateInfo, error) {

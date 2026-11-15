@@ -62,6 +62,8 @@ type API interface {
 	CloudflaredStatus() (ArtifactStatus, error)
 	CheckUpdate(component string) (updateInfo, error)
 	ApplyUpdate(component string, force bool) (updateResult, error)
+	// AutoUpdateStatus 返回后台自更新的策略与状态（供面板展示）。
+	AutoUpdateStatus() ([]string, error)
 }
 
 // ---------- 控制通道 ----------
@@ -275,6 +277,13 @@ func (s *rpcServer) dispatch(req rpcRequest) rpcResponse {
 
 	case "info":
 		return s.ok(s.eng.Info())
+
+	case "autoupdateStatus":
+		lines, err := s.eng.AutoUpdateStatus()
+		if err != nil {
+			return s.fail(err)
+		}
+		return s.ok(lines)
 
 	case "updateCheck":
 		info, err := s.eng.UpdateCheck()

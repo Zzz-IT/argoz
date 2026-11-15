@@ -32,7 +32,8 @@ func showMaintenance(e rpc.API) {
 		fmt.Printf("  5 升级 cloudflared\n")
 		fmt.Printf("  6 重装 cloudflared\n")
 		fmt.Printf("  7 查看版本 / 路径 / 缓存状态\n")
-		fmt.Printf("  8 返回\n\n")
+		fmt.Printf("  8 后台自更新状态\n")
+		fmt.Printf("  9 返回\n\n")
 		fmt.Printf("  %s重装会强制重新获取并校验同一版本；失败时保留旧版本。%s\n\n", ColorGrey, ColorReset)
 
 		switch strings.TrimSpace(ReadLine("  > ")) {
@@ -50,7 +51,9 @@ func showMaintenance(e rpc.API) {
 			applyComponentUpdate(e, componentCloudflared, true)
 		case "7":
 			showArtifactStatusPage(e)
-		case "8", "0", "":
+		case "8":
+			showAutoUpdateStatusPage(e)
+		case "9", "0", "":
 			return
 		}
 	}
@@ -106,6 +109,24 @@ func showArtifactStatusPage(e rpc.API) {
 
 	fmt.Println("\n  说明：升级/重装的下载、校验、备份和原子替换由 daemon 事务处理；")
 	fmt.Println("        本页只查看状态，不会下载或修改任何文件。")
+	Pause("按回车返回维护菜单...")
+}
+
+// showAutoUpdateStatusPage 展示后台自更新的策略与状态（只读）。
+func showAutoUpdateStatusPage(e rpc.API) {
+	Clear()
+	Title("后台自更新状态")
+
+	lines, err := e.AutoUpdateStatus()
+	if err != nil {
+		fmt.Printf("  %s[错误] 读取失败: %v%s\n", ColorRed, err, ColorReset)
+	} else {
+		for _, line := range lines {
+			fmt.Printf("  %s\n", line)
+		}
+	}
+
+	fmt.Printf("\n  %s开关在「3 设置」的 11 / 12；本页只查看状态。%s\n", ColorGrey, ColorReset)
 	Pause("按回车返回维护菜单...")
 }
 
